@@ -1,0 +1,171 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Power Heating Controller — Global Setup",
+        "description": "Select the sensor that measures your total household power consumption and set your contracted power limit.",
+        "data": {
+          "power_sensor": "Power consumption sensor",
+          "max_power": "Contracted power limit (W)"
+        }
+      },
+      "room_heater_type": {
+        "title": "Add a Room — Step 1 of 3",
+        "description": "Enter the room name and choose what type of heater controls it.",
+        "data": {
+          "room_name": "Room name",
+          "heater_type": "Heater type"
+        }
+      },
+      "room_heater_entity": {
+        "title": "Add a Room — Step 2 of 3",
+        "description": "Select the heater entity and temperature sensor for this room.",
+        "data": {
+          "heater_entity": "Heater entity",
+          "temp_sensor": "Temperature sensor"
+        }
+      },
+      "room_settings": {
+        "title": "Add a Room — Step 3 of 3",
+        "description": "Configure power consumption, target temperature and priority. Priority 1 = highest (last to lose power).",
+        "data": {
+          "target_temp": "Target temperature (°C)",
+          "power_w": "Rated power (W)",
+          "priority": "Priority (1–10)"
+        }
+      },
+      "add_another": {
+        "title": "Room Added",
+        "description": "{room_count} room(s) configured: {rooms}. Add another room?",
+        "data": {
+          "add_another": "Add another room"
+        }
+      }
+    },
+    "error": {
+      "entity_not_found": "Entity not found. Please check the entity ID."
+    },
+    "abort": {
+      "already_configured": "Power Heating Controller is already configured."
+    }
+  },
+
+  
+  "options": {
+    "step": {
+      "init": {
+        "title": "Power Heating Controller — Options",
+        "data": {
+          "action": "What would you like to configure?"
+        }
+      },
+      "global": {
+        "title": "Edit Global Settings",
+        "data": {
+          "power_sensor": "Power consumption sensor",
+          "max_power": "Contracted power limit (W)"
+        }
+      },
+      "edit_room": {
+        "title": "Edit Room: {room_name}",
+        "data": {
+          "target_temp": "Target temperature (°C)",
+          "power_w": "Rated power (W)",
+          "priority": "Priority (1–10)",
+          "enabled": "Enabled",
+          "delete_room": "Delete this room"
+        }
+      },
+      "room_heater_type": {
+        "title": "New Room — Step 1 of 3",
+        "data": {
+          "room_name": "Room name",
+          "heater_type": "Heater type"
+        }
+      },
+      "room_heater_entity": {
+        "title": "New Room — Step 2 of 3",
+        "data": {
+          "heater_entity": "Heater entity",
+          "temp_sensor": "Temperature sensor"
+        }
+      },
+      "room_settings": {
+        "title": "New Room — Step 3 of 3",
+        "data": {
+          "target_temp": "Target temperature (°C)",
+          "power_w": "Rated power (W)",
+          "priority": "Priority (1–10)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "room_status": {
+        "state": {
+          "heating": "Heating",
+          "waiting": "Waiting for power",
+          "idle": "Idle",
+          "disabled": "Disabled",
+          "unavailable": "Unavailable"
+        }
+      }
+    }
+  },
+
+  "services": {
+    "set_max_power": {
+      "name": "Set Max Power",
+      "description": "Update the contracted power limit in watts.",
+      "fields": {
+        "watts": {
+          "name": "Watts",
+          "description": "New power limit in watts (500–20000)."
+        }
+      }
+    },
+    "add_room": {
+      "name": "Add Room",
+      "description": "Dynamically add a new room to the controller at runtime.",
+      "fields": {
+        "room_name": {"name": "Room Name", "description": "Human-readable name."},
+        "heater_type": {"name": "Heater Type", "description": "climate or switch."},
+        "heater_entity": {"name": "Heater Entity", "description": "climate.* or switch.* entity."},
+        "temp_sensor": {"name": "Temperature Sensor", "description": "sensor.* entity."},
+        "target_temp": {"name": "Target Temp (°C)", "description": "Desired temperature."},
+        "power_w": {"name": "Power (W)", "description": "Rated power of this heater."},
+        "priority": {"name": "Priority", "description": "1=highest, 10=lowest."}
+      }
+    },
+    "remove_room": {
+      "name": "Remove Room",
+      "description": "Remove a room from the controller (turns off its heater first).",
+      "fields": {
+        "room_id": {"name": "Room ID", "description": "The slug identifier of the room."}
+      }
+    },
+    "set_room_target_temp": {
+      "name": "Set Room Target Temperature",
+      "description": "Update the target temperature for a room.",
+      "fields": {
+        "room_id": {"name": "Room ID", "description": "The slug identifier of the room."},
+        "target_temp": {"name": "Target Temp (°C)", "description": "New target temperature."}
+      }
+    },
+    "enable_room": {
+      "name": "Enable Room",
+      "description": "Re-enable a room in the heating controller.",
+      "fields": {
+        "room_id": {"name": "Room ID", "description": "The slug identifier of the room."}
+      }
+    },
+    "disable_room": {
+      "name": "Disable Room",
+      "description": "Disable a room (stops heating, removes from power budget).",
+      "fields": {
+        "room_id": {"name": "Room ID", "description": "The slug identifier of the room."}
+      }
+    }
+  }
+}
