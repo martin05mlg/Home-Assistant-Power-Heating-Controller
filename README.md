@@ -4,7 +4,7 @@
 [![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.4%2B-blue)](https://www.home-assistant.io)
 
 Smart, power-aware heating controller for Home Assistant.  
-Dynamically manages electric radiators to **never exceed your contracted power limit** while maximising thermal comfort across all rooms.
+Dynamically manages electric radiators to **never exceed your contracted power limit** while maximizing thermal comfort across all rooms.
 
 ---
 
@@ -56,7 +56,7 @@ Dynamically manages electric radiators to **never exceed your contracted power l
 
 ### Via HACS (recommended)
 1. Open HACS → **Integrations** → three-dot menu → **Custom repositories**
-2. Add `https://github.com/yourusername/ha-power-heating-controller` as **Integration**
+2. Add `https://github.com/martin05mlg/Home-Assistant-Power-Heating-Controller` as **Integration**
 3. Install **Power Heating Controller**
 4. Restart Home Assistant
 
