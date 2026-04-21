@@ -14,6 +14,7 @@ import homeassistant.helpers.config_validation as cv
 from .const import (
     CONF_HEATER_ENTITY,
     CONF_HEATER_TYPE,
+    CONF_HVAC_MODE_HEAT,       # ← was missing
     CONF_MAX_POWER,
     CONF_POWER_SENSOR,
     CONF_POWER_W,
@@ -23,6 +24,7 @@ from .const import (
     CONF_ROOMS,
     CONF_TARGET_TEMP,
     CONF_TEMP_SENSOR,
+    DEFAULT_HVAC_MODE_HEAT,    # ← was missing
     DEFAULT_MAX_POWER,
     DEFAULT_POWER_W,
     DEFAULT_PRIORITY,
@@ -78,6 +80,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             target_temp=r.get(CONF_TARGET_TEMP, DEFAULT_TARGET_TEMP),
             power_w=r.get(CONF_POWER_W, DEFAULT_POWER_W),
             priority=r.get(CONF_PRIORITY, DEFAULT_PRIORITY),
+            # FIX: hvac_mode_heat was never loaded from stored config, so edits
+            # made in the options flow were silently ignored on every reload.
+            hvac_mode_heat=r.get(CONF_HVAC_MODE_HEAT, DEFAULT_HVAC_MODE_HEAT),
             enabled=r.get("enabled", True),
         )
         for r in data.get(CONF_ROOMS, [])

@@ -284,6 +284,16 @@ class PowerHeatingCoordinator(DataUpdateCoordinator):
             self.async_set_updated_data(self._build_snapshot())
 
     def _find_victim(self) -> str | None:
+        """Return the room_id of the least-urgent active room.
+
+        Sort order: lowest priority number is most urgent, so we want
+        the highest priority *number* first (= least important room).
+        Among rooms at the same priority, revoke from the most comfortable
+        one (smallest thermal deficit) first.
+
+        FIX: was (deficit ASC, -priority ASC) which ignored priority
+             and always preempted the most comfortable room regardless.
+        """
         candidates = [
             (room_id, state.deficit, self.room_configs[room_id].priority)
             for room_id, state in self.room_states.items()
@@ -291,7 +301,8 @@ class PowerHeatingCoordinator(DataUpdateCoordinator):
         ]
         if not candidates:
             return None
-        candidates.sort(key=lambda x: (x[1], -x[2]))
+        # Sort: highest priority number first (least important), then smallest deficit
+        candidates.sort(key=lambda x: (-x[2], x[1]))
         return candidates[0][0]
 
     def _schedule_power_ok_action(self) -> None:

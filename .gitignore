@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.coverage
+coverage.xml
+htmlcov/
+*.log
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Home Assistant / HACS temporary files
+deps/
+home-assistant_v2.db
+
+# Editor settings
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Packaging
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.python-version
+
+
+# Other
+todo.txt
