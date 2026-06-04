@@ -1,5 +1,5 @@
 {
   "name": "HAPHC: Home Assistant Power Heating Controller",
   "content_in_root": false,
-  "domain": "power_heat"
+  "domain": "power_heating_controller"
 }

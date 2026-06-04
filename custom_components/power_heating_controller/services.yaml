@@ -74,7 +74,7 @@ add_room:
 
 remove_room:
   name: Remove Room
-  description: Remove a room from the controller (turns off its heater first).
+  description: Remove a room from the controller (turns off its heater and removes orphaned entities).
   fields:
     room_id:
       name: Room ID

@@ -1,4 +1,12 @@
-"""Climate platform for Power Heating Controller."""
+"""Climate platform for Power Heating Controller.
+
+FIX (this revision):
+  - RoomThermostatClimate now inherits from RestoreEntity so the enabled/off
+    state survives HA restarts. Without this, every restart turned all rooms ON.
+  - async_added_to_hass restores the last hvac_mode from HA storage.
+  - Target temperature is only a local setpoint for the coordinator's thermostat
+    algorithm; it is NOT pushed to the underlying hardware climate entity.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +20,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
@@ -30,8 +39,19 @@ async def async_setup_entry(
     )
 
 
-class RoomThermostatClimate(CoordinatorEntity, ClimateEntity):
-    """Climate entity for one room managed by the Power Heating Controller."""
+class RoomThermostatClimate(CoordinatorEntity, ClimateEntity, RestoreEntity):
+    """Climate entity for one room managed by the Power Heating Controller.
+
+    This entity acts as a virtual thermostat — it does NOT directly represent
+    the hardware heater. It gives the user a standard thermostat card to:
+      - Set the target temperature for the coordinator's software thermostat
+      - Enable or disable the room (HVACMode.HEAT / HVACMode.OFF)
+
+    The coordinator drives the actual hardware heater independently.
+
+    State persistence: the enabled flag is restored from HA's last-known state
+    on restart, so rooms do not default to ON after every HA restart.
+    """
 
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
@@ -57,6 +77,34 @@ class RoomThermostatClimate(CoordinatorEntity, ClimateEntity):
         cfg = coordinator.room_configs[room_id]
         self._attr_name = cfg.room_name
         self._attr_unique_id = f"{entry.entry_id}_{room_id}_climate"
+
+    async def async_added_to_hass(self) -> None:
+        """Restore last hvac_mode (enabled state) from HA storage on restart.
+
+        This prevents rooms from defaulting to ON after every HA restart.
+        If there is no previous state (first boot), we respect the value
+        already stored in the coordinator config (cfg.enabled).
+        """
+        await super().async_added_to_hass()
+
+        last_state = await self.async_get_last_state()
+        if last_state is not None:
+            # Restore enabled from the persisted hvac_mode
+            was_enabled = last_state.state == HVACMode.HEAT
+            cfg = self.coordinator.room_configs.get(self._room_id)
+            if cfg is not None and cfg.enabled != was_enabled:
+                # Update coordinator silently (no refresh) — the coordinator's
+                # periodic poll will pick it up on the next cycle.
+                cfg.enabled = was_enabled
+                if not was_enabled:
+                    state = self.coordinator.room_states.get(self._room_id)
+                    if state:
+                        state.demand = False
+                        state.permission = False
+                    # Fire-and-forget: turn hardware off without blocking setup
+                    self.hass.async_create_task(
+                        self.coordinator._apply_heater(self._room_id, active=False)
+                    )
 
     @property
     def device_info(self):
@@ -87,6 +135,12 @@ class RoomThermostatClimate(CoordinatorEntity, ClimateEntity):
         return cfg.target_temp if cfg else None
 
     async def async_set_temperature(self, **kwargs) -> None:
+        """Update the coordinator's software thermostat setpoint.
+
+        NOTE: This does NOT push a temperature to the hardware climate entity.
+        The hardware thermostat keeps its own setpoint. HA only controls
+        the hvac_mode (heat/off) to grant or revoke heating permission.
+        """
         temp = kwargs.get(ATTR_TEMPERATURE)
         if temp is not None:
             await self.coordinator.async_set_target_temp(self._room_id, float(temp))
@@ -118,6 +172,9 @@ class RoomThermostatClimate(CoordinatorEntity, ClimateEntity):
             return HVACAction.OFF
         if state.demand and state.permission:
             return HVACAction.HEATING
+        if state.demand and not state.permission:
+            # Waiting for power budget — show as IDLE (no dedicated "waiting" action)
+            return HVACAction.IDLE
         return HVACAction.IDLE
 
     @property

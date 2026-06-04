@@ -8,8 +8,21 @@ This is the brain of the integration. It:
   4. Applies a preemption algorithm: the coldest-relative-to-setpoint room
      can displace the room with the smallest thermal deficit.
   5. Drives the actual heater (climate entity or switch) through HA service calls.
+  6. Restores the last known enabled/permission state across HA restarts.
 
 All demand/permission state is kept internally — no input_booleans are created.
+
+FIX NOTES (this revision):
+  - Heater target temperature is no longer pushed to the climate entity (Tuya/etc.
+    thermostats have their own setpoint; we only control ON/OFF via hvac_mode).
+    When activating a climate heater, we set it to hvac_mode_heat only.
+    The user controls the hardware thermostat setpoint separately.
+  - Bootstrap timeout: _register_listeners and async_setup no longer await
+    potentially-slow tasks; everything is non-blocking.
+  - Room enabled state is stored in HA's storage (RestoreEntity pattern is used
+    in climate.py) so rooms keep their last on/off state across restarts.
+  - async_remove_room now returns the list of entity unique_ids that should be
+    cleaned from the entity registry, so __init__.py can remove them.
 """
 
 from __future__ import annotations
@@ -96,12 +109,18 @@ class PowerHeatingCoordinator(DataUpdateCoordinator):
         self._unsub_listeners: list[Any] = []
 
     async def async_setup(self) -> None:
-        await self._register_listeners()
+        """Register state listeners. Non-blocking — does not await slow I/O."""
+        self._register_listeners_sync()
 
     async def async_unload(self) -> None:
         for unsub in self._unsub_listeners:
             unsub()
         self._unsub_listeners.clear()
+
+        # Cancel any pending grace-period tasks
+        for task in (self._overpower_task, self._power_ok_task):
+            if task and not task.done():
+                task.cancel()
 
     async def _async_update_data(self) -> dict:
         await self._update_all_demands()
@@ -124,20 +143,32 @@ class PowerHeatingCoordinator(DataUpdateCoordinator):
     async def async_add_room(self, config: RoomConfig) -> None:
         self.room_configs[config.room_id] = config
         self.room_states[config.room_id] = RoomState()
-        await self._register_listeners()
+        self._register_listeners_sync()
         await self.async_refresh()
 
-    async def async_remove_room(self, room_id: str) -> None:
+    async def async_remove_room(self, room_id: str) -> list[str]:
+        """Remove a room and return entity unique_id suffixes for registry cleanup."""
+        removed_unique_ids: list[str] = []
         if room_id in self.room_configs:
             await self._apply_heater(room_id, active=False)
+            # Collect unique_id fragments so caller can clean the entity registry
+            removed_unique_ids = [
+                f"{room_id}_climate",
+                f"{room_id}_status",
+            ]
             del self.room_configs[room_id]
             del self.room_states[room_id]
-        await self._register_listeners()
+        self._register_listeners_sync()
         await self.async_refresh()
+        return removed_unique_ids
 
     async def async_set_target_temp(self, room_id: str, temp: float) -> None:
         if cfg := self.room_configs.get(room_id):
             cfg.target_temp = temp
+            # If the room is currently heating, re-apply (no setpoint push — see header note)
+            state = self.room_states.get(room_id)
+            if state and state.permission:
+                await self._apply_heater(room_id, active=True)
         await self.async_refresh()
 
     async def async_set_max_power(self, watts: float) -> None:
@@ -155,7 +186,8 @@ class PowerHeatingCoordinator(DataUpdateCoordinator):
                 await self._apply_heater(room_id, active=False)
         await self.async_refresh()
 
-    async def _register_listeners(self) -> None:
+    def _register_listeners_sync(self) -> None:
+        """Re-register state-change listeners. Fully synchronous, no awaiting."""
         for unsub in self._unsub_listeners:
             unsub()
         self._unsub_listeners.clear()
@@ -193,6 +225,10 @@ class PowerHeatingCoordinator(DataUpdateCoordinator):
                 self.hass, entities_to_watch, _on_state_change
             )
         )
+
+    # Keep async_setup backward-compat alias
+    async def _register_listeners(self) -> None:
+        self._register_listeners_sync()
 
     async def _update_all_demands(self) -> None:
         for room_id in list(self.room_configs.keys()):
@@ -286,13 +322,8 @@ class PowerHeatingCoordinator(DataUpdateCoordinator):
     def _find_victim(self) -> str | None:
         """Return the room_id of the least-urgent active room.
 
-        Sort order: lowest priority number is most urgent, so we want
-        the highest priority *number* first (= least important room).
-        Among rooms at the same priority, revoke from the most comfortable
-        one (smallest thermal deficit) first.
-
-        FIX: was (deficit ASC, -priority ASC) which ignored priority
-             and always preempted the most comfortable room regardless.
+        Sort order: highest priority number first (least important room),
+        then smallest thermal deficit among equals.
         """
         candidates = [
             (room_id, state.deficit, self.room_configs[room_id].priority)
@@ -301,7 +332,7 @@ class PowerHeatingCoordinator(DataUpdateCoordinator):
         ]
         if not candidates:
             return None
-        # Sort: highest priority number first (least important), then smallest deficit
+        # Highest priority number = least important; among ties, smallest deficit yields first
         candidates.sort(key=lambda x: (-x[2], x[1]))
         return candidates[0][0]
 
@@ -360,15 +391,22 @@ class PowerHeatingCoordinator(DataUpdateCoordinator):
             await self._apply_switch(cfg, active)
 
     async def _apply_climate(self, cfg: RoomConfig, active: bool) -> None:
+        """
+        Control a climate entity.
+
+        FIX: We no longer push the target temperature to the hardware thermostat.
+        Many thermostats (e.g. Tuya/Beok) have their own physical setpoint that
+        the user controls; overwriting it from HA causes "Unrecognised HVAC Mode"
+        warnings and interferes with the hardware dial.
+
+        We only toggle hvac_mode: hvac_mode_heat to activate, 'off' to deactivate.
+        The hardware thermostat itself decides when its element fires based on its
+        own setpoint — HA's role is purely to grant/revoke permission via mode.
+        """
         if active:
             await self.hass.services.async_call(
                 "climate", "set_hvac_mode",
                 {"entity_id": cfg.heater_entity, "hvac_mode": cfg.hvac_mode_heat},
-                blocking=False,
-            )
-            await self.hass.services.async_call(
-                "climate", "set_temperature",
-                {"entity_id": cfg.heater_entity, "temperature": cfg.target_temp},
                 blocking=False,
             )
         else:

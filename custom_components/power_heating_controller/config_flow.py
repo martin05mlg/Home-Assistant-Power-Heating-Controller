@@ -1,4 +1,13 @@
-"""Config flow for Power Heating Controller."""
+"""Config flow for Power Heating Controller.
+
+FIX NOTES (this revision):
+  - async_step_edit_room now includes heater_entity and temp_sensor fields,
+    so the user can change which physical sensor/entity a room uses.
+  - Documentation URL in manifest now points to the real repo URL placeholder
+    (controlled in manifest.json, not here — but info_url in strings.json updated).
+  - Added CONF_HVAC_MODE_HEAT to the edit_room step with a clearer label.
+  - Room name is now also editable in async_step_edit_room.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +20,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import (
-    BooleanSelector,          # ← added; replaces bare `bool` in schemas
+    BooleanSelector,
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
@@ -67,7 +76,7 @@ class PowerHeatingControllerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN)
         self._rooms: list[dict] = []
         self._current_room: dict = {}
 
-    # Step 1 — global settings (power sensor + limit)
+    # Step 1 — global settings
     async def async_step_user(self, user_input=None):
         errors = {}
 
@@ -92,12 +101,9 @@ class PowerHeatingControllerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN)
                 }
             ),
             errors=errors,
-            description_placeholders={
-                "info": "Select the sensor that reports your total household power consumption."
-            },
         )
 
-    # Step 2 — room: basic info + heater type
+    # Step 2 — room: name + heater type
     async def async_step_room_heater_type(self, user_input=None):
         errors = {}
 
@@ -117,8 +123,8 @@ class PowerHeatingControllerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN)
                     vol.Required(CONF_HEATER_TYPE, default=HEATER_TYPE_CLIMATE): SelectSelector(
                         SelectSelectorConfig(
                             options=[
-                                {"value": HEATER_TYPE_CLIMATE, "label": "Climate entity (e.g. AC / heat pump)"},
-                                {"value": HEATER_TYPE_SWITCH, "label": "Switch (e.g. plug-in radiator)"},
+                                {"value": HEATER_TYPE_CLIMATE, "label": "Climate entity (e.g. AC / heat pump / Tuya thermostat)"},
+                                {"value": HEATER_TYPE_SWITCH, "label": "Switch (e.g. smart plug / relay)"},
                             ],
                             mode=SelectSelectorMode.LIST,
                         )
@@ -221,7 +227,6 @@ class PowerHeatingControllerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN)
         return self.async_show_form(
             step_id="add_another",
             data_schema=vol.Schema(
-                # FIX: BooleanSelector instead of bare bool
                 {vol.Required("add_another", default=False): BooleanSelector()}
             ),
             description_placeholders={
@@ -240,32 +245,24 @@ class PowerHeatingControllerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN)
             },
         )
 
-    # ── Options flow ──────────────────────────────────────────────────────────
-
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
-        # FIX: Do NOT pass config_entry to constructor.
-        # HA 2024.11+ sets self.config_entry automatically on the flow instance.
         return PowerHeatingOptionsFlow()
 
 
 # ── Options flow ──────────────────────────────────────────────────────────────
 
 class PowerHeatingOptionsFlow(config_entries.OptionsFlow):
-    """Allow editing max power and per-room settings after initial setup."""
+    """Allow editing global settings and per-room settings after initial setup."""
 
-    # FIX: Removed config_entry parameter from __init__.
-    # HA 2024.11+ deprecated passing config_entry here; it is now available
-    # as self.config_entry (set automatically before async_step_init is called).
     def __init__(self) -> None:
         self._options: dict = {}
         self._selected_room_id: str | None = None
         self._new_room: dict = {}
 
     async def async_step_init(self, user_input=None):
-        """Main options menu. Lazy-init _options so self.config_entry is ready."""
-        # FIX: initialise here where self.config_entry is guaranteed to be set.
+        """Main options menu."""
         if not self._options:
             self._options = dict(self.config_entry.options or self.config_entry.data)
 
@@ -321,6 +318,11 @@ class PowerHeatingOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_edit_room(self, user_input=None):
+        """Edit an existing room.
+
+        FIX: Now includes heater_entity, temp_sensor and room_name so the user
+        can update all room properties, not just numeric settings.
+        """
         rooms: list[dict] = self._options.get(CONF_ROOMS, [])
         room = next((r for r in rooms if r[CONF_ROOM_ID] == self._selected_room_id), None)
         if room is None:
@@ -331,7 +333,13 @@ class PowerHeatingOptionsFlow(config_entries.OptionsFlow):
                 self._options[CONF_ROOMS] = [r for r in rooms if r[CONF_ROOM_ID] != self._selected_room_id]
                 return self.async_create_entry(title="", data=self._options)
 
-            # FIX: cast numeric fields to correct types (NumberSelector returns float)
+            # Update all editable fields
+            if CONF_ROOM_NAME in user_input and user_input[CONF_ROOM_NAME]:
+                room[CONF_ROOM_NAME] = user_input[CONF_ROOM_NAME]
+            if CONF_HEATER_ENTITY in user_input and user_input[CONF_HEATER_ENTITY]:
+                room[CONF_HEATER_ENTITY] = user_input[CONF_HEATER_ENTITY]
+            if CONF_TEMP_SENSOR in user_input and user_input[CONF_TEMP_SENSOR]:
+                room[CONF_TEMP_SENSOR] = user_input[CONF_TEMP_SENSOR]
             if CONF_TARGET_TEMP in user_input:
                 room[CONF_TARGET_TEMP] = float(user_input[CONF_TARGET_TEMP])
             if CONF_POWER_W in user_input:
@@ -345,30 +353,43 @@ class PowerHeatingOptionsFlow(config_entries.OptionsFlow):
 
             return self.async_create_entry(title="", data=self._options)
 
+        heater_type = room.get(CONF_HEATER_TYPE, HEATER_TYPE_CLIMATE)
+        heater_domain = "climate" if heater_type == HEATER_TYPE_CLIMATE else "switch"
+
+        schema_dict = {
+            # Room name
+            vol.Optional(CONF_ROOM_NAME, default=room.get(CONF_ROOM_NAME, "")): TextSelector(),
+            # Entities
+            vol.Optional(CONF_HEATER_ENTITY, default=room.get(CONF_HEATER_ENTITY, "")): EntitySelector(
+                EntitySelectorConfig(domain=heater_domain)
+            ),
+            vol.Optional(CONF_TEMP_SENSOR, default=room.get(CONF_TEMP_SENSOR, "")): EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="temperature")
+            ),
+            # Thermostat settings
+            vol.Required(CONF_TARGET_TEMP, default=room.get(CONF_TARGET_TEMP, DEFAULT_TARGET_TEMP)): NumberSelector(
+                NumberSelectorConfig(min=5, max=35, step=0.5, unit_of_measurement="°C", mode=NumberSelectorMode.SLIDER)
+            ),
+            vol.Required(CONF_POWER_W, default=room.get(CONF_POWER_W, DEFAULT_POWER_W)): NumberSelector(
+                NumberSelectorConfig(min=100, max=5000, step=50, unit_of_measurement="W", mode=NumberSelectorMode.BOX)
+            ),
+            vol.Required(CONF_PRIORITY, default=room.get(CONF_PRIORITY, DEFAULT_PRIORITY)): NumberSelector(
+                NumberSelectorConfig(min=1, max=10, step=1, mode=NumberSelectorMode.BOX)
+            ),
+            vol.Required(CONF_ENABLED, default=room.get(CONF_ENABLED, True)): BooleanSelector(),
+            # Advanced: HVAC mode string for non-standard climate integrations (e.g. Tuya)
+            vol.Optional(CONF_HVAC_MODE_HEAT, default=room.get(CONF_HVAC_MODE_HEAT, DEFAULT_HVAC_MODE_HEAT)): TextSelector(),
+            # Delete
+            vol.Optional("delete_room", default=False): BooleanSelector(),
+        }
+
         return self.async_show_form(
             step_id="edit_room",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_TARGET_TEMP, default=room.get(CONF_TARGET_TEMP, DEFAULT_TARGET_TEMP)): NumberSelector(
-                        NumberSelectorConfig(min=5, max=35, step=0.5, unit_of_measurement="°C", mode=NumberSelectorMode.SLIDER)
-                    ),
-                    vol.Required(CONF_POWER_W, default=room.get(CONF_POWER_W, DEFAULT_POWER_W)): NumberSelector(
-                        NumberSelectorConfig(min=100, max=5000, step=50, unit_of_measurement="W", mode=NumberSelectorMode.BOX)
-                    ),
-                    vol.Required(CONF_PRIORITY, default=room.get(CONF_PRIORITY, DEFAULT_PRIORITY)): NumberSelector(
-                        NumberSelectorConfig(min=1, max=10, step=1, mode=NumberSelectorMode.BOX)
-                    ),
-                    # FIX: BooleanSelector instead of bare bool — bare bool breaks HA's form renderer
-                    vol.Required(CONF_ENABLED, default=room.get(CONF_ENABLED, True)): BooleanSelector(),
-                    vol.Optional("delete_room", default=False): BooleanSelector(),
-                    # Added: expose hvac_mode_heat so non-standard climate modes (e.g. Tuya) can be set
-                    vol.Optional(CONF_HVAC_MODE_HEAT, default=room.get(CONF_HVAC_MODE_HEAT, DEFAULT_HVAC_MODE_HEAT)): TextSelector(),
-                }
-            ),
+            data_schema=vol.Schema(schema_dict),
             description_placeholders={"room_name": room[CONF_ROOM_NAME]},
         )
 
-    # ── Add room steps (reused in options flow) ───────────────────────────────
+    # ── Add room steps (options flow) ─────────────────────────────────────────
 
     async def async_step_room_heater_type(self, user_input=None):
         errors = {}

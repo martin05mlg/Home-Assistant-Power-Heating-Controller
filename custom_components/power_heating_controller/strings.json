@@ -50,7 +50,6 @@
     }
   },
 
-  
   "options": {
     "step": {
       "init": {
@@ -68,11 +67,16 @@
       },
       "edit_room": {
         "title": "Edit Room: {room_name}",
+        "description": "Update the room settings. Leave entity fields unchanged if you don't want to modify them.",
         "data": {
+          "room_name": "Room name",
+          "heater_entity": "Heater entity (climate.* or switch.*)",
+          "temp_sensor": "Temperature sensor",
           "target_temp": "Target temperature (°C)",
           "power_w": "Rated power (W)",
           "priority": "Priority (1–10)",
           "enabled": "Enabled",
+          "hvac_mode_heat": "HVAC heat mode (advanced, default: heat)",
           "delete_room": "Delete this room"
         }
       },
@@ -100,6 +104,7 @@
       }
     }
   },
+
   "entity": {
     "sensor": {
       "room_status": {
@@ -140,7 +145,7 @@
     },
     "remove_room": {
       "name": "Remove Room",
-      "description": "Remove a room from the controller (turns off its heater first).",
+      "description": "Remove a room from the controller (turns off its heater and removes its entities).",
       "fields": {
         "room_id": {"name": "Room ID", "description": "The slug identifier of the room."}
       }
