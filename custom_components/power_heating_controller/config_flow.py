@@ -79,7 +79,7 @@ def _global_schema(defaults: dict[str, Any]) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(CONF_POWER_SENSOR, default=defaults.get(CONF_POWER_SENSOR, vol.UNDEFINED)): EntitySelector(
-                EntitySelectorConfig(domain="sensor", device_class="power")
+                EntitySelectorConfig(domain="sensor")
             ),
             vol.Required(CONF_MAX_POWER, default=defaults.get(CONF_MAX_POWER, DEFAULT_MAX_POWER)): NumberSelector(
                 NumberSelectorConfig(
@@ -359,7 +359,7 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
                 errors[CONF_POWER_SENSOR] = "entity_not_found"
             else:
                 self._options.update(_global_from_input(user_input))
-                return self.async_create_entry(data=self._options)
+                return self.async_create_entry(title="", data=self._options)
 
         return self.async_show_form(
             step_id="global",
@@ -379,7 +379,7 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
         if user_input is not None:
             if user_input.get(DELETE_ROOM):
                 self._options[CONF_ROOMS] = [r for r in rooms if r is not room]
-                return self.async_create_entry(data=self._options)
+                return self.async_create_entry(title="", data=self._options)
 
             name = user_input[CONF_ROOM_NAME].strip()
             if not name:
@@ -396,7 +396,7 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
                 room[CONF_TEMP_SENSOR] = user_input[CONF_TEMP_SENSOR]
                 room[CONF_ENABLED] = bool(user_input[CONF_ENABLED])
                 _apply_room_settings(room, user_input)
-                return self.async_create_entry(data=self._options)
+                return self.async_create_entry(title="", data=self._options)
 
         defaults = {**room, **(user_input or {})}
         schema: dict = {
@@ -419,4 +419,4 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
 
     async def _async_room_added(self, room: dict[str, Any]) -> ConfigFlowResult:
         self._rooms().append(room)
-        return self.async_create_entry(data=self._options)
+        return self.async_create_entry(title="", data=self._options)

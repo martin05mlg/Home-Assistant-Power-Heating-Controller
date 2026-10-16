@@ -629,28 +629,37 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return
 
-        data: dict[str, Any] = {
-            ATTR_ENTITY_ID: cfg.heater_entity,
-            ATTR_HVAC_MODE: cfg.hvac_mode_heat,
-        }
-        heater = self.hass.states.get(cfg.heater_entity)
-        supports_temp = heater is not None and bool(
-            int(heater.attributes.get(ATTR_SUPPORTED_FEATURES, 0))
-            & ClimateEntityFeature.TARGET_TEMPERATURE
+        # 1. Turn on the heater in the configured HVAC mode (e.g. "heat")
+        await self.hass.services.async_call(
+            "climate",
+            "set_hvac_mode",
+            {ATTR_ENTITY_ID: cfg.heater_entity, ATTR_HVAC_MODE: cfg.hvac_mode_heat},
+            blocking=False,
         )
-        if cfg.force_max_temp and supports_temp:
-            # One call: switch on in heat mode AND open the device fully, so the
-            # software thermostat is the one deciding when to stop.
-            data[ATTR_TEMPERATURE] = float(
+
+        # 2. Optionally push the hardware thermostat to its maximum temperature
+        if cfg.force_max_temp:
+            heater = self.hass.states.get(cfg.heater_entity)
+            max_temp = float(
                 heater.attributes.get(ATTR_MAX_TEMP, FALLBACK_HEATER_MAX_TEMP)
+                if heater is not None
+                else FALLBACK_HEATER_MAX_TEMP
             )
-            await self.hass.services.async_call(
-                "climate", "set_temperature", data, blocking=False
-            )
-        else:
-            await self.hass.services.async_call(
-                "climate", "set_hvac_mode", data, blocking=False
-            )
+            try:
+                await self.hass.services.async_call(
+                    "climate",
+                    "set_temperature",
+                    {ATTR_ENTITY_ID: cfg.heater_entity, ATTR_TEMPERATURE: max_temp},
+                    blocking=False,
+                )
+            except (HomeAssistantError, vol.Invalid) as err:
+                _LOGGER.debug(
+                    "Room %s: could not set max temperature on %s: %s",
+                    cfg.room_id,
+                    cfg.heater_entity,
+                    err,
+                )
+
 
     def _heater_is_on(self, cfg: RoomConfig) -> bool | None:
         state = self.hass.states.get(cfg.heater_entity)
