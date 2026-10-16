@@ -1,24 +1,26 @@
 # HAPHC — Home Assistant Power Heating Controller
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
-[![HA Version](https://img.shields.io/badge/Home%20Assistant-2026.4%2B-blue)](https://www.home-assistant.io)
+[![HA Version](https://img.shields.io/badge/Home%20Assistant-2025.2%2B-blue)](https://www.home-assistant.io)
+[![Version](https://img.shields.io/badge/Version-2.0.0-green)](https://github.com/martin05mlg/Home-Assistant-Power-Heating-Controller)
 
 Smart, power-aware heating controller for Home Assistant.  
-Dynamically manages electric radiators to **never exceed your contracted power limit** while maximizing thermal comfort across all rooms.
+Dynamically manages electric radiators and heaters to **never exceed your contracted power limit** while maximizing thermal comfort across all rooms.
 
 ---
 
 ## Features
 
-- **100% UI-driven setup** — no YAML required
+- **100% UI-driven setup** — no YAML required (English & Spanish translations included)
 - **Per-room priorities** — higher-priority rooms are the last to lose heating
-- **Preemption** — a very cold room can displace a comfortable lower-priority one
-- **Flexible hardware** — works with `climate` entities (thermostats, AC/heat pumps) or plain `switch` entities (smart plugs)
-- **Reactive + polling** — responds instantly to power spikes and temperature changes
-- **Runtime services** — add/remove rooms, change setpoints, update power limit without restarting HA
-- **State persistence** — rooms remember their last on/off state across HA restarts
-- **Clean entities** — no `input_boolean` clutter; demand/permission is internal state
-- **Non-intrusive climate control** — only toggles hvac_mode on/off; never overwrites the hardware thermostat's own setpoint
+- **Smart Preemption** — a colder, higher-priority room (or a much colder same-priority room) can displace a comfortable lower-priority one, respecting a minimum on-time to avoid relay chatter
+- **Pending Power Reservation** — newly turned-on heaters reserve their rated wattage for 30 seconds until the household power meter reflects the new load, preventing multi-room overshoot
+- **Reliable Overpower Shedding** — sustained consumption above the contracted limit sheds as many heaters as needed (least urgent first) after a 5-second grace period
+- **Periodic State Reconciliation** — automatically corrects heaters left ON after restarts/reloads, missed RF/Zigbee commands, or manual external changes
+- **Fail-safe Sensor Handling** — blocks new permissions if the power sensor is unavailable (supports `W` and `kW` with automatic conversion), and safely turns off heating in a room if its temperature sensor stays unavailable for more than 2 minutes
+- **Flexible Hardware** — works with `climate` entities (thermostats, TRVs, AC/heat pumps) or plain `switch` entities (smart plugs, relays)
+- **Optional Max-Temp Boost** — for `climate` heaters, optionally pushes the device's own `max_temp` (or 35 °C fallback) in a single atomic service call when heating is granted so the physical thermostat opens fully while HAPHC's software thermostat controls the room temperature
+- **Full State Persistence** — target temperatures, room enabled/disabled states, and max power limit changes are persisted directly into the config entry options without triggering unnecessary reloads
 
 ---
 
@@ -26,40 +28,45 @@ Dynamically manages electric radiators to **never exceed your contracted power l
 
 ### Software thermostat vs hardware thermostat
 
-This integration implements its **own software thermostat** per room. The *Target temperature* you set in the thermostat card is used by HAPHC's algorithm to decide whether the room *wants* heat (demand). It does **not** push that temperature to the hardware thermostat.
+HAPHC implements its **own software thermostat** per room with configurable cold and hot hysteresis tolerances (default `±0.3 °C`):
 
-When a room gets permission to heat, HAPHC only sets the climate entity's `hvac_mode` to `heat` (or your configured mode). The hardware thermostat's own setpoint dial/app stays in control of how hot the element runs. This is intentional — it avoids interfering with Tuya/Beok/etc. thermostats that have their own physical controls and can produce errors if HA tries to set their temperature.
+1. **Demand**: When `current_temp <= target_temp - cold_tolerance`, the room requests heat (`demand = True`). When `current_temp >= target_temp + hot_tolerance`, demand turns off (`demand = False`).
+2. **Permission & Power Budget**: The coordinator checks available power (`max_power - current_power - pending_power`). If enough wattage is available (or can be freed by preempting lower-priority rooms), it grants `permission = True`.
+3. **Actuation**:
+   - **`switch` heaters**: Calls `switch.turn_on` when granted permission, and `switch.turn_off` when revoked.
+   - **`climate` heaters**: When granted permission, sets `hvac_mode` to your configured heat mode (default `heat`). If **Set the heater to its maximum temperature when heating** (`force_max_temp`) is enabled (default `True`), it sends a single `climate.set_temperature` call with both `hvac_mode` and the hardware's `max_temp` attribute so the physical radiator never throttles itself prematurely. When revoked, it sets `hvac_mode` to `off`.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     PowerHeatingCoordinator                         │
-│                                                                     │
-│  power_sensor ──► available_power                                   │
-│                        │                                            │
-│                   ┌────▼────────────────────────────────────┐       │
-│  temp_sensor ──►  │  Software Thermostat (per room)         │       │
-│  target_temp ──►  │  deficit = target - current             │       │
-│                   │  demand ON  when temp < target - tol    │       │
-│                   │  demand OFF when temp > target + tol    │       │
-│                   └────┬────────────────────────────────────┘       │
-│                        │ demand signal                              │
-│                   ┌────▼────────────────────────────────────┐       │
-│                   │  Power Manager                          │       │
-│                   │  • grant permission if watts available  │       │
-│                   │  • revoke from least-urgent on overload │       │
-│                   │  • preempt lower-priority for colder    │       │
-│                   └────┬────────────────────────────────────┘       │
-│                        │ permission signal                          │
-│                   ┌────▼────────────────────────────────────┐       │
-│                   │  Actuator (per room)                    │       │
-│                   │  demand AND permission → hvac_mode=heat │       │
-│                   │  otherwise            → hvac_mode=off   │       │
-│                   └─────────────────────────────────────────┘       │
-└─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                       PowerHeatingCoordinator                          │
+│                                                                        │
+│  power_sensor (W / kW) ──► available = max - current - pending_power   │
+│                                 │                                      │
+│                            ┌────▼───────────────────────────────────┐  │
+│  temp_sensor ───────────►  │  Software Thermostat (per room)        │  │
+│  target_temp ± tol ─────►  │  deficit = target - current            │  │
+│                            │  demand ON  when temp <= target - cold │  │
+│                            │  demand OFF when temp >= target + hot  │  │
+│                            └────┬───────────────────────────────────┘  │
+│                                 │ demand signal                        │
+│                            ┌────▼───────────────────────────────────┐  │
+│                            │  Power Manager (locked control cycle)  │  │
+│                            │  • grant permission if watts available │  │
+│                            │  • preempt lower-priority / warmer     │  │
+│                            │  • shed load on sustained overpower    │  │
+│                            │  • periodic hardware reconciliation    │  │
+│                            └────┬───────────────────────────────────┘  │
+│                                 │ permission signal                    │
+│                            ┌────▼───────────────────────────────────┐  │
+│                            │  Actuator (per room)                   │  │
+│                            │  permission=True  → ON / heat (+max)   │  │
+│                            │  permission=False → OFF                │  │
+│                            └────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -73,7 +80,7 @@ When a room gets permission to heat, HAPHC only sets the climate entity's `hvac_
 4. Restart Home Assistant
 
 ### Manual
-1. Copy `custom_components/power_heating_controller/` to your HA `custom_components/` folder
+1. Copy `custom_components/power_heating_controller/` to your Home Assistant `custom_components/` folder
 2. Restart Home Assistant
 
 ---
@@ -82,48 +89,47 @@ When a room gets permission to heat, HAPHC only sets the climate entity's `hvac_
 
 1. Go to **Settings → Devices & Services → Add Integration**
 2. Search for **Power Heating Controller**
-3. Follow the wizard:
-   - Select your **power consumption sensor** (W)
-   - Enter your **contracted power limit** (W)
-   - Add rooms one by one:
-     - Room name
-     - Heater type: `climate` or `switch`
-     - Heater entity + temperature sensor
-     - Target temperature (for the software thermostat algorithm), rated power, priority
+3. Follow the setup wizard:
+   - **Global Setup**:
+     - Select your **power consumption sensor** (`W` or `kW`)
+     - Enter your **contracted power limit** (`W`)
+     - Set **cold tolerance** and **hot tolerance** (`°C`, default `0.3 °C`)
+   - **Add Rooms** one by one:
+     - Room name & heater type (`climate` or `switch`)
+     - Heater entity & room temperature sensor
+     - Target temperature, rated power (`W`), priority (`1–10`)
+     - For `climate` heaters: HVAC mode used to heat (default `heat`) and whether to force max temperature when heating
 
 ---
 
-## Entities Created
+## Devices & Entities Created
 
-For each room `<room_name>`:
+HAPHC creates a main **Power Heating Controller** hub device and one **Room device** per configured room.
 
-| Entity | Type | Description |
-|--------|------|-------------|
-| `climate.<room_name>` | Climate | Virtual thermostat card — set target temp, enable/disable room |
-| `sensor.<room_name>_heating_status` | Sensor | `heating` / `waiting` / `idle` / `disabled` |
-
-Global:
+### Per Room `<Room Name>`
 
 | Entity | Type | Description |
 |--------|------|-------------|
-| `sensor.available_power` | Sensor | Watts left before hitting the limit |
-| `sensor.current_power_consumption` | Sensor | Current total draw from the power sensor |
-| `number.max_power_limit` | Number | Contracted limit (adjustable live) |
+| `climate.<room_id>` | Climate | Virtual thermostat — set target temperature and enable/disable (`heat` / `off`) |
+| `sensor.<room_id>_heating_status` | Sensor (`enum`) | `heating` / `waiting` / `idle` / `disabled` |
+
+### Global Hub
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| `sensor.power_heating_controller_available_power` | Sensor | Remaining power budget (`W`), accounting for newly started heaters |
+| `sensor.power_heating_controller_current_power_consumption` | Sensor | Household consumption in `W` |
+| `number.power_heating_controller_max_power_limit` | Number | Contracted power limit in `W` (persisted when changed) |
 
 ---
 
-## Editing a Room After Setup
+## Editing Global Settings or Rooms
 
-Go to **Settings → Devices & Services → Power Heating Controller → Configure**.
+Go to **Settings → Devices & Services → Power Heating Controller → Configure**:
 
-From the options menu you can edit any room's:
-- **Room name**
-- **Heater entity** (climate or switch)
-- **Temperature sensor**
-- **Target temperature**, **rated power**, **priority**
-- **Enabled** toggle
-- **HVAC heat mode** (advanced — for thermostats that use a non-standard mode name like `"auto"` or `"manual"` instead of `"heat"`)
-- **Delete room** (also removes the orphaned entities from the registry)
+- **⚡ Power limit, sensor & tolerances**: Update the power sensor, contracted power limit, or cold/hot hysteresis tolerances.
+- **🏠 `<Room Name>`**: Edit the room's name, heater entity, temperature sensor, target temperature, rated power, priority, enabled state, HVAC heat mode, max-temp boost, or **delete the room** (which safely turns off its heater and cleans up its device and entities).
+- **➕ Add new room**: Add another room through the UI.
 
 ---
 
@@ -131,60 +137,47 @@ From the options menu you can edit any room's:
 
 | Service | Description |
 |---------|-------------|
-| `power_heating_controller.set_max_power` | Update contracted limit |
-| `power_heating_controller.set_room_target_temp` | Change a room's setpoint |
-| `power_heating_controller.enable_room` | Re-enable a disabled room |
-| `power_heating_controller.disable_room` | Disable a room |
-| `power_heating_controller.add_room` | Add a room at runtime (persisted) |
-| `power_heating_controller.remove_room` | Remove a room and clean up its entities |
+| `power_heating_controller.set_max_power` | Update the contracted power limit in watts (persisted) |
+| `power_heating_controller.set_room_target_temp` | Change a room's target temperature (persisted) |
+| `power_heating_controller.enable_room` | Enable a room (persisted) |
+| `power_heating_controller.disable_room` | Disable a room and turn off its heater (persisted) |
+| `power_heating_controller.add_room` | Dynamically add a new room (persisted, reloads integration) |
+| `power_heating_controller.remove_room` | Turn off the heater and remove a room and its entities |
+
+> **Tip:** You can find a room's `room_id` in the `room_id` state attribute of its `climate` entity or at the top of the **Edit room** dialog in Options.
 
 ---
 
-## Priority System
+## Priority & Preemption System
 
-Priority is a number from **1** (highest) to **10** (lowest).
+Priority is a number from **1** (highest importance) to **10** (lowest importance).
 
-- When power is short, the room with the **highest priority number AND smallest thermal deficit** is preempted first (least important + most comfortable yields first).
-- A high-priority room that is very cold can **displace** a lower-priority comfortable room.
-- Rooms at the same priority level compete equally — the most comfortable one yields first.
-
-**Example:** Bedroom (priority 1) vs Living room (priority 3) vs Kitchen (priority 5).  
-If power runs short, the kitchen yields first. If still short, the living room. The bedroom is protected until last.
-
----
-
-## FAQ
-
-**Q: My climate entity (Tuya/Beok) shows "Unrecognised HVAC Mode" warnings.**  
-A: HAPHC no longer pushes temperature setpoints to the hardware — it only toggles `hvac_mode`. If you still see the warning, check what mode name your thermostat uses. Edit the room in Options → set `HVAC heat mode` to the correct string (e.g. `"auto"` or `"manual"`).
-
-**Q: Rooms turn on by default after a HA restart.**  
-A: Fixed in v1.1.0. Rooms now persist their last on/off state using HA's RestoreEntity, so a restart leaves them as they were.
-
-**Q: I deleted a room and its entities show "integration no longer provides this entity".**  
-A: Fixed in v1.1.0. Removing a room via Options → delete or via the `remove_room` service now automatically cleans up orphaned entities from the entity registry.
-
-**Q: Does this replace `generic_thermostat`?**  
-A: Yes — the coordinator implements its own software thermostat per room.
-
-**Q: Can I use this with underfloor heating via switches?**  
-A: Yes — choose `switch` as the heater type.
-
-**Q: I added a room via service call but it disappeared after a restart.**  
-A: Fixed in v1.1.0. Rooms added via `add_room` service are now persisted to the config entry options.
+- **Granting order**: Waiting rooms are sorted by highest importance first (`priority` ascending), and ties are broken by largest thermal deficit (`target_temp - current_temp` descending).
+- **Preemption**: If a waiting room does not have enough available power, it can preempt active rooms that have been heating for at least 2 minutes (`MIN_ON_TIME_SECONDS`) if:
+  - The active room has a lower priority (higher priority number), **or**
+  - Both rooms have the same priority, and the waiting room's thermal deficit is at least `1.0 °C` greater (`PREEMPT_DEFICIT_MARGIN`).
+- **Overpower shedding**: When household power stays above `max_power` for 5 seconds (`OVERPOWER_GRACE_SECONDS`), active heaters are revoked starting from the lowest priority (highest number) and smallest thermal deficit until the excess load is covered. After shedding, a 20-second cooldown (`POWER_OK_GRACE_SECONDS`) prevents immediate re-granting.
 
 ---
 
 ## Changelog
 
+### v2.0.0
+- **Critical Fix**: Fixed overpower grace timer being reset on every power sensor update so load shedding reliably triggers on fast-reporting meters.
+- **Critical Fix**: Added pending power reservation (`PENDING_POWER_SECONDS = 30s`) so multiple rooms aren't simultaneously granted permission from the same stale power reading.
+- **Critical Fix**: Fail-safe behavior when sensors become `unavailable` (blocks new permissions when power sensor is unavailable; stops room heating if temperature sensor is unavailable for >120s).
+- **Critical Fix**: Added periodic hardware state reconciliation so heaters left ON across restarts/reloads or missed commands are switched to the expected state.
+- **Critical Fix**: serialized all control decisions with an `asyncio.Lock` to eliminate race conditions between state listeners, periodic polling, and overpower tasks.
+- **Fix**: Wired preemption into the permission-granting cycle with minimum on-time protection (`MIN_ON_TIME_SECONDS = 120s`) and same-priority deficit margin (`1.0 °C`).
+- **Fix**: Used `copy.deepcopy` in the Options Flow so editing rooms works reliably every time.
+- **Fix**: Unified persistence into `entry.options` (target temperature, enabled state, max power) without triggering full reloads on runtime changes, eliminating startup flash-on bugs.
+- **Feature**: Automatic `kW` → `W` unit conversion on the household power sensor.
+- **Feature**: Configurable `cold_tolerance` and `hot_tolerance` in Global Settings (default `0.3 °C`).
+- **Feature**: Configurable `force_max_temp` per climate room (reads the hardware entity's `max_temp` attribute and sends a single atomic `climate.set_temperature` call).
+- **Feature**: Added `translations/en.json` and `translations/es.json`, per-room devices linked to the hub device, `SensorDeviceClass.ENUM` for room status, and single config entry enforcement.
+
 ### v1.1.0
-- **Fix**: Rooms no longer default to ON after HA restart (RestoreEntity)
-- **Fix**: Removing a room now cleans orphaned entities from entity registry
-- **Fix**: No longer pushes temperature setpoint to hardware climate entities (avoids Tuya/Beok HVAC mode errors)
-- **Fix**: `add_room` service now persists new rooms to config entry options
-- **Fix**: `manifest.json` and `hacs.json` had wrong GitHub URL / domain
-- **Improvement**: Options flow now allows editing heater entity, temp sensor and room name
-- **Improvement**: Bootstrap timeout resolved (listener registration is now non-blocking)
+- Initial public bugfix revision (entity registry cleanup, options flow editing, service registration).
 
 ---
 

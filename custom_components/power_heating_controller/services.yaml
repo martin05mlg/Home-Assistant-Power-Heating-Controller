@@ -1,31 +1,23 @@
 set_max_power:
-  name: Set Max Power
-  description: Update the contracted power limit in watts.
   fields:
     watts:
-      name: Watts
-      description: New power limit in watts (500–20000).
       required: true
       selector:
         number:
           min: 500
-          max: 20000
+          max: 50000
           step: 100
           unit_of_measurement: W
+          mode: box
 
 add_room:
-  name: Add Room
-  description: Dynamically add a new room to the controller at runtime.
   fields:
     room_name:
-      name: Room Name
-      description: Human-readable name for the room.
       required: true
+      example: Living room
       selector:
         text:
     heater_type:
-      name: Heater Type
-      description: "climate (AC/heat pump) or switch (smart plug)."
       required: true
       selector:
         select:
@@ -33,21 +25,20 @@ add_room:
             - climate
             - switch
     heater_entity:
-      name: Heater Entity
-      description: The climate.* or switch.* entity to control.
       required: true
       selector:
         entity:
+          domain:
+            - climate
+            - switch
     temp_sensor:
-      name: Temperature Sensor
-      description: The sensor.* entity that reports room temperature.
       required: true
       selector:
         entity:
           domain: sensor
+          device_class: temperature
     target_temp:
-      name: Target Temperature (°C)
-      description: Desired room temperature.
+      default: 20
       selector:
         number:
           min: 5
@@ -55,47 +46,46 @@ add_room:
           step: 0.5
           unit_of_measurement: °C
     power_w:
-      name: Rated Power (W)
-      description: Rated power consumption of this heater.
+      default: 1000
       selector:
         number:
-          min: 100
+          min: 50
           max: 10000
           step: 50
           unit_of_measurement: W
+          mode: box
     priority:
-      name: Priority
-      description: "1 = highest (last to lose power), 10 = lowest (first to be preempted)."
+      default: 5
       selector:
         number:
           min: 1
           max: 10
           step: 1
+    hvac_mode_heat:
+      default: heat
+      selector:
+        text:
+    force_max_temp:
+      default: true
+      selector:
+        boolean:
 
 remove_room:
-  name: Remove Room
-  description: Remove a room from the controller (turns off its heater and removes orphaned entities).
   fields:
     room_id:
-      name: Room ID
-      description: The slug identifier of the room (e.g. living_room).
       required: true
+      example: living_room
       selector:
         text:
 
 set_room_target_temp:
-  name: Set Room Target Temperature
-  description: Update the target temperature setpoint for a room.
   fields:
     room_id:
-      name: Room ID
-      description: The slug identifier of the room.
       required: true
+      example: living_room
       selector:
         text:
     target_temp:
-      name: Target Temperature (°C)
-      description: New target temperature (5–35 °C).
       required: true
       selector:
         number:
@@ -105,23 +95,17 @@ set_room_target_temp:
           unit_of_measurement: °C
 
 enable_room:
-  name: Enable Room
-  description: Re-enable a room in the heating controller.
   fields:
     room_id:
-      name: Room ID
-      description: The slug identifier of the room.
       required: true
+      example: living_room
       selector:
         text:
 
 disable_room:
-  name: Disable Room
-  description: Disable a room — stops heating and removes it from the power budget.
   fields:
     room_id:
-      name: Room ID
-      description: The slug identifier of the room.
       required: true
+      example: living_room
       selector:
         text:

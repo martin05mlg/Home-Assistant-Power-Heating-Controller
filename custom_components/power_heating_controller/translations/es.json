@@ -1,0 +1,251 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Power Heating Controller — Configuración global",
+        "description": "Selecciona el sensor que mide el consumo total de la casa e indica tu potencia contratada.",
+        "data": {
+          "power_sensor": "Sensor de consumo",
+          "max_power": "Potencia contratada (W)",
+          "cold_tolerance": "Tolerancia en frío (°C)",
+          "hot_tolerance": "Tolerancia en caliente (°C)"
+        },
+        "data_description": {
+          "power_sensor": "Sensor con el consumo de toda la casa (W o kW, se convierte automáticamente).",
+          "cold_tolerance": "Una habitación pide calor cuando está este valor por debajo de su objetivo.",
+          "hot_tolerance": "Una habitación deja de calentar cuando está este valor por encima de su objetivo."
+        }
+      },
+      "room_heater_type": {
+        "title": "Añadir habitación — paso 1 de 3",
+        "description": "Introduce el nombre de la habitación y el tipo de calefactor.",
+        "data": {
+          "room_name": "Nombre de la habitación",
+          "heater_type": "Tipo de calefactor"
+        }
+      },
+      "room_heater_entity": {
+        "title": "Añadir habitación — paso 2 de 3",
+        "description": "Selecciona el calefactor y el sensor de temperatura de **{room_name}**.",
+        "data": {
+          "heater_entity": "Entidad del calefactor",
+          "temp_sensor": "Sensor de temperatura"
+        }
+      },
+      "room_settings": {
+        "title": "Añadir habitación — paso 3 de 3",
+        "description": "Ajustes de **{room_name}**. Prioridad 1 = más importante (la última en perder potencia), 10 = menos importante.",
+        "data": {
+          "target_temp": "Temperatura objetivo (°C)",
+          "power_w": "Potencia nominal (W)",
+          "priority": "Prioridad (1–10)",
+          "hvac_mode_heat": "Modo HVAC para calentar",
+          "force_max_temp": "Poner el calefactor a su temperatura máxima al calentar"
+        },
+        "data_description": {
+          "hvac_mode_heat": "Normalmente `heat`. Algunos termostatos usan `auto` o `manual`.",
+          "force_max_temp": "Recomendado: el controlador decide cuándo parar, así que el dispositivo no debe pararse por su cuenta."
+        }
+      },
+      "add_another": {
+        "title": "Habitación añadida",
+        "description": "{room_count} habitación(es) configurada(s): {rooms}. ¿Añadir otra?",
+        "data": {
+          "add_another": "Añadir otra habitación"
+        }
+      }
+    },
+    "error": {
+      "entity_not_found": "Entidad no encontrada.",
+      "invalid_name": "Nombre de habitación no válido.",
+      "room_exists": "Ya existe una habitación con ese nombre."
+    },
+    "abort": {
+      "already_configured": "Power Heating Controller ya está configurado.",
+      "single_instance_allowed": "Power Heating Controller ya está configurado."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Power Heating Controller — Opciones",
+        "data": {
+          "action": "¿Qué quieres configurar?"
+        }
+      },
+      "global": {
+        "title": "Ajustes globales",
+        "data": {
+          "power_sensor": "Sensor de consumo",
+          "max_power": "Potencia contratada (W)",
+          "cold_tolerance": "Tolerancia en frío (°C)",
+          "hot_tolerance": "Tolerancia en caliente (°C)"
+        },
+        "data_description": {
+          "cold_tolerance": "Una habitación pide calor cuando está este valor por debajo de su objetivo.",
+          "hot_tolerance": "Una habitación deja de calentar cuando está este valor por encima de su objetivo."
+        }
+      },
+      "edit_room": {
+        "title": "Editar habitación: {room_name}",
+        "description": "Id de la habitación: `{room_id}` (lo usan los servicios).",
+        "data": {
+          "room_name": "Nombre de la habitación",
+          "heater_entity": "Entidad del calefactor",
+          "temp_sensor": "Sensor de temperatura",
+          "target_temp": "Temperatura objetivo (°C)",
+          "power_w": "Potencia nominal (W)",
+          "priority": "Prioridad (1–10)",
+          "enabled": "Activada",
+          "hvac_mode_heat": "Modo HVAC para calentar",
+          "force_max_temp": "Poner el calefactor a su temperatura máxima al calentar",
+          "delete_room": "Eliminar esta habitación"
+        },
+        "data_description": {
+          "hvac_mode_heat": "Normalmente `heat`. Algunos termostatos usan `auto` o `manual`.",
+          "delete_room": "Se apaga el calefactor y se eliminan las entidades de la habitación."
+        }
+      },
+      "room_heater_type": {
+        "title": "Nueva habitación — paso 1 de 3",
+        "data": {
+          "room_name": "Nombre de la habitación",
+          "heater_type": "Tipo de calefactor"
+        }
+      },
+      "room_heater_entity": {
+        "title": "Nueva habitación — paso 2 de 3",
+        "description": "Selecciona el calefactor y el sensor de temperatura de **{room_name}**.",
+        "data": {
+          "heater_entity": "Entidad del calefactor",
+          "temp_sensor": "Sensor de temperatura"
+        }
+      },
+      "room_settings": {
+        "title": "Nueva habitación — paso 3 de 3",
+        "description": "Ajustes de **{room_name}**. Prioridad 1 = más importante (la última en perder potencia), 10 = menos importante.",
+        "data": {
+          "target_temp": "Temperatura objetivo (°C)",
+          "power_w": "Potencia nominal (W)",
+          "priority": "Prioridad (1–10)",
+          "hvac_mode_heat": "Modo HVAC para calentar",
+          "force_max_temp": "Poner el calefactor a su temperatura máxima al calentar"
+        }
+      }
+    },
+    "error": {
+      "entity_not_found": "Entidad no encontrada.",
+      "invalid_name": "Nombre de habitación no válido.",
+      "room_exists": "Ya existe una habitación con ese nombre."
+    },
+    "abort": {
+      "room_not_found": "La habitación ya no existe."
+    }
+  },
+  "selector": {
+    "heater_type": {
+      "options": {
+        "climate": "Entidad climate (termostato, radiador, bomba de calor…)",
+        "switch": "Interruptor (enchufe inteligente, relé…)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "available_power": {
+        "name": "Potencia disponible"
+      },
+      "current_power": {
+        "name": "Consumo actual"
+      },
+      "room_status": {
+        "name": "Estado de calefacción",
+        "state": {
+          "heating": "Calentando",
+          "waiting": "Esperando potencia",
+          "idle": "En reposo",
+          "disabled": "Desactivada"
+        }
+      }
+    },
+    "number": {
+      "max_power": {
+        "name": "Límite de potencia"
+      }
+    }
+  },
+  "exceptions": {
+    "not_loaded": {
+      "message": "Power Heating Controller no está cargado."
+    },
+    "room_not_found": {
+      "message": "La habitación `{room_id}` no existe."
+    },
+    "room_exists": {
+      "message": "La habitación `{room_id}` ya existe."
+    },
+    "invalid_name": {
+      "message": "Nombre de habitación no válido."
+    },
+    "wrong_heater_domain": {
+      "message": "{entity_id} no es una entidad de tipo {heater_type}."
+    }
+  },
+  "services": {
+    "set_max_power": {
+      "name": "Fijar potencia máxima",
+      "description": "Actualiza la potencia contratada (se guarda).",
+      "fields": {
+        "watts": {
+          "name": "Vatios",
+          "description": "Nuevo límite de potencia en vatios."
+        }
+      }
+    },
+    "add_room": {
+      "name": "Añadir habitación",
+      "description": "Añade una habitación (se guarda y la integración se recarga).",
+      "fields": {
+        "room_name": { "name": "Nombre", "description": "Nombre de la habitación. El id se genera a partir de él." },
+        "heater_type": { "name": "Tipo de calefactor", "description": "climate o switch." },
+        "heater_entity": { "name": "Entidad del calefactor", "description": "Entidad climate.* o switch.* según el tipo." },
+        "temp_sensor": { "name": "Sensor de temperatura", "description": "Sensor con la temperatura de la habitación." },
+        "target_temp": { "name": "Temperatura objetivo", "description": "Temperatura deseada." },
+        "power_w": { "name": "Potencia nominal", "description": "Potencia del calefactor en vatios." },
+        "priority": { "name": "Prioridad", "description": "1 = más importante, 10 = menos importante." },
+        "hvac_mode_heat": { "name": "Modo HVAC para calentar", "description": "Modo usado para encender un calefactor climate (por defecto: heat)." },
+        "force_max_temp": { "name": "Forzar temperatura máxima", "description": "Poner el calefactor climate a su temperatura máxima al calentar." }
+      }
+    },
+    "remove_room": {
+      "name": "Eliminar habitación",
+      "description": "Apaga el calefactor y elimina la habitación y sus entidades.",
+      "fields": {
+        "room_id": { "name": "Id de habitación", "description": "Identificador (ver el atributo room_id de la entidad climate)." }
+      }
+    },
+    "set_room_target_temp": {
+      "name": "Fijar temperatura objetivo",
+      "description": "Cambia la temperatura objetivo de una habitación (se guarda).",
+      "fields": {
+        "room_id": { "name": "Id de habitación", "description": "Identificador de la habitación." },
+        "target_temp": { "name": "Temperatura objetivo", "description": "Nueva temperatura objetivo." }
+      }
+    },
+    "enable_room": {
+      "name": "Activar habitación",
+      "description": "Activa una habitación (se guarda).",
+      "fields": {
+        "room_id": { "name": "Id de habitación", "description": "Identificador de la habitación." }
+      }
+    },
+    "disable_room": {
+      "name": "Desactivar habitación",
+      "description": "Desactiva una habitación: deja de calentar y sale del reparto de potencia (se guarda).",
+      "fields": {
+        "room_id": { "name": "Id de habitación", "description": "Identificador de la habitación." }
+      }
+    }
+  }
+}
+

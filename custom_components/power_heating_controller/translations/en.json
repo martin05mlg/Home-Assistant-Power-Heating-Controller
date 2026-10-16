@@ -1,0 +1,250 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Power Heating Controller — Global setup",
+        "description": "Select the sensor that measures the total household consumption and set your contracted power limit.",
+        "data": {
+          "power_sensor": "Power consumption sensor",
+          "max_power": "Contracted power limit (W)",
+          "cold_tolerance": "Cold tolerance (°C)",
+          "hot_tolerance": "Hot tolerance (°C)"
+        },
+        "data_description": {
+          "power_sensor": "Sensor with the whole-house consumption (W or kW, it is converted automatically).",
+          "cold_tolerance": "A room starts asking for heat when it is this much below its target.",
+          "hot_tolerance": "A room stops heating when it is this much above its target."
+        }
+      },
+      "room_heater_type": {
+        "title": "Add a room — step 1 of 3",
+        "description": "Enter the room name and choose what type of heater it has.",
+        "data": {
+          "room_name": "Room name",
+          "heater_type": "Heater type"
+        }
+      },
+      "room_heater_entity": {
+        "title": "Add a room — step 2 of 3",
+        "description": "Select the heater and the temperature sensor of **{room_name}**.",
+        "data": {
+          "heater_entity": "Heater entity",
+          "temp_sensor": "Temperature sensor"
+        }
+      },
+      "room_settings": {
+        "title": "Add a room — step 3 of 3",
+        "description": "Settings for **{room_name}**. Priority 1 = most important (last to lose power), 10 = least important.",
+        "data": {
+          "target_temp": "Target temperature (°C)",
+          "power_w": "Rated power (W)",
+          "priority": "Priority (1–10)",
+          "hvac_mode_heat": "HVAC mode used to heat",
+          "force_max_temp": "Set the heater to its maximum temperature when heating"
+        },
+        "data_description": {
+          "hvac_mode_heat": "Usually `heat`. Some thermostats use `auto` or `manual`.",
+          "force_max_temp": "Recommended: the controller decides when to stop, so the device should not stop on its own."
+        }
+      },
+      "add_another": {
+        "title": "Room added",
+        "description": "{room_count} room(s) configured: {rooms}. Add another room?",
+        "data": {
+          "add_another": "Add another room"
+        }
+      }
+    },
+    "error": {
+      "entity_not_found": "Entity not found.",
+      "invalid_name": "Invalid room name.",
+      "room_exists": "A room with this name already exists."
+    },
+    "abort": {
+      "already_configured": "Power Heating Controller is already configured.",
+      "single_instance_allowed": "Power Heating Controller is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Power Heating Controller — Options",
+        "data": {
+          "action": "What would you like to configure?"
+        }
+      },
+      "global": {
+        "title": "Global settings",
+        "data": {
+          "power_sensor": "Power consumption sensor",
+          "max_power": "Contracted power limit (W)",
+          "cold_tolerance": "Cold tolerance (°C)",
+          "hot_tolerance": "Hot tolerance (°C)"
+        },
+        "data_description": {
+          "cold_tolerance": "A room starts asking for heat when it is this much below its target.",
+          "hot_tolerance": "A room stops heating when it is this much above its target."
+        }
+      },
+      "edit_room": {
+        "title": "Edit room: {room_name}",
+        "description": "Room id: `{room_id}` (used by the services).",
+        "data": {
+          "room_name": "Room name",
+          "heater_entity": "Heater entity",
+          "temp_sensor": "Temperature sensor",
+          "target_temp": "Target temperature (°C)",
+          "power_w": "Rated power (W)",
+          "priority": "Priority (1–10)",
+          "enabled": "Enabled",
+          "hvac_mode_heat": "HVAC mode used to heat",
+          "force_max_temp": "Set the heater to its maximum temperature when heating",
+          "delete_room": "Delete this room"
+        },
+        "data_description": {
+          "hvac_mode_heat": "Usually `heat`. Some thermostats use `auto` or `manual`.",
+          "delete_room": "The heater is turned off and the room entities are removed."
+        }
+      },
+      "room_heater_type": {
+        "title": "New room — step 1 of 3",
+        "data": {
+          "room_name": "Room name",
+          "heater_type": "Heater type"
+        }
+      },
+      "room_heater_entity": {
+        "title": "New room — step 2 of 3",
+        "description": "Select the heater and the temperature sensor of **{room_name}**.",
+        "data": {
+          "heater_entity": "Heater entity",
+          "temp_sensor": "Temperature sensor"
+        }
+      },
+      "room_settings": {
+        "title": "New room — step 3 of 3",
+        "description": "Settings for **{room_name}**. Priority 1 = most important (last to lose power), 10 = least important.",
+        "data": {
+          "target_temp": "Target temperature (°C)",
+          "power_w": "Rated power (W)",
+          "priority": "Priority (1–10)",
+          "hvac_mode_heat": "HVAC mode used to heat",
+          "force_max_temp": "Set the heater to its maximum temperature when heating"
+        }
+      }
+    },
+    "error": {
+      "entity_not_found": "Entity not found.",
+      "invalid_name": "Invalid room name.",
+      "room_exists": "A room with this name already exists."
+    },
+    "abort": {
+      "room_not_found": "The room no longer exists."
+    }
+  },
+  "selector": {
+    "heater_type": {
+      "options": {
+        "climate": "Climate entity (thermostat, radiator, heat pump…)",
+        "switch": "Switch (smart plug, relay…)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "available_power": {
+        "name": "Available power"
+      },
+      "current_power": {
+        "name": "Current power consumption"
+      },
+      "room_status": {
+        "name": "Heating status",
+        "state": {
+          "heating": "Heating",
+          "waiting": "Waiting for power",
+          "idle": "Idle",
+          "disabled": "Disabled"
+        }
+      }
+    },
+    "number": {
+      "max_power": {
+        "name": "Max power limit"
+      }
+    }
+  },
+  "exceptions": {
+    "not_loaded": {
+      "message": "Power Heating Controller is not loaded."
+    },
+    "room_not_found": {
+      "message": "Room `{room_id}` does not exist."
+    },
+    "room_exists": {
+      "message": "Room `{room_id}` already exists."
+    },
+    "invalid_name": {
+      "message": "Invalid room name."
+    },
+    "wrong_heater_domain": {
+      "message": "{entity_id} is not a {heater_type} entity."
+    }
+  },
+  "services": {
+    "set_max_power": {
+      "name": "Set max power",
+      "description": "Update the contracted power limit (persisted).",
+      "fields": {
+        "watts": {
+          "name": "Watts",
+          "description": "New power limit in watts."
+        }
+      }
+    },
+    "add_room": {
+      "name": "Add room",
+      "description": "Add a new room (persisted, the integration reloads).",
+      "fields": {
+        "room_name": { "name": "Room name", "description": "Human-readable name. The room id is derived from it." },
+        "heater_type": { "name": "Heater type", "description": "climate or switch." },
+        "heater_entity": { "name": "Heater entity", "description": "climate.* or switch.* entity matching the heater type." },
+        "temp_sensor": { "name": "Temperature sensor", "description": "Sensor reporting the room temperature." },
+        "target_temp": { "name": "Target temperature", "description": "Desired temperature." },
+        "power_w": { "name": "Rated power", "description": "Rated power of the heater in watts." },
+        "priority": { "name": "Priority", "description": "1 = most important, 10 = least important." },
+        "hvac_mode_heat": { "name": "HVAC heat mode", "description": "Mode used to turn a climate heater on (default: heat)." },
+        "force_max_temp": { "name": "Force max temperature", "description": "Set a climate heater to its maximum temperature when heating." }
+      }
+    },
+    "remove_room": {
+      "name": "Remove room",
+      "description": "Turn off the heater and remove the room and its entities.",
+      "fields": {
+        "room_id": { "name": "Room ID", "description": "Room identifier (see the room_id attribute of the climate entity)." }
+      }
+    },
+    "set_room_target_temp": {
+      "name": "Set room target temperature",
+      "description": "Update the target temperature of a room (persisted).",
+      "fields": {
+        "room_id": { "name": "Room ID", "description": "Room identifier." },
+        "target_temp": { "name": "Target temperature", "description": "New target temperature." }
+      }
+    },
+    "enable_room": {
+      "name": "Enable room",
+      "description": "Enable a room (persisted).",
+      "fields": {
+        "room_id": { "name": "Room ID", "description": "Room identifier." }
+      }
+    },
+    "disable_room": {
+      "name": "Disable room",
+      "description": "Disable a room: it stops heating and leaves the power budget (persisted).",
+      "fields": {
+        "room_id": { "name": "Room ID", "description": "Room identifier." }
+      }
+    }
+  }
+}

@@ -2,68 +2,67 @@
 
 from __future__ import annotations
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass, SensorEntity, SensorStateClass,
-)
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from typing import Any
 
-from .const import DOMAIN
-from .coordinator import PowerHeatingCoordinator
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
+from homeassistant.const import UnitOfPower
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+from .const import ROOM_STATUSES
+from .coordinator import PowerHeatingConfigEntry
+from .entity import PowerHeatingEntity, PowerHeatingRoomEntity
+
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: PowerHeatingConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    coordinator: PowerHeatingCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities = [
-        AvailablePowerSensor(coordinator, entry),
-        CurrentPowerSensor(coordinator, entry),
+    """Set up global power sensors and one status sensor per room."""
+    coordinator = entry.runtime_data
+    entities: list[SensorEntity] = [
+        AvailablePowerSensor(coordinator, "available_power"),
+        CurrentPowerSensor(coordinator, "current_power"),
     ]
-    for room_id in coordinator.room_configs:
-        entities.append(RoomStatusSensor(coordinator, entry, room_id))
+    entities.extend(
+        RoomStatusSensor(coordinator, room_id) for room_id in coordinator.room_configs
+    )
     async_add_entities(entities)
 
 
-class _BaseCoordinatorSensor(CoordinatorEntity, SensorEntity):
-    def __init__(self, coordinator: PowerHeatingCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": "Power Heating Controller",
-            "manufacturer": "HAPHC",
-            "model": "Power Heating Controller",
-            "sw_version": "1.0.0",
-        }
-
-
-class AvailablePowerSensor(_BaseCoordinatorSensor):
-    _attr_name = "Available Power"
-    _attr_native_unit_of_measurement = "W"
+class _PowerSensor(PowerHeatingEntity, SensorEntity):
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:lightning-bolt-circle"
+    _attr_suggested_display_precision = 0
+    _data_key: str
 
-    def __init__(self, coordinator, entry):
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_available_power"
-
-    @property
-    def native_value(self):
-        if self.coordinator.data:
-            return round(self.coordinator.data.get("available_power", 0), 1)
-        return None
+    def __init__(self, coordinator, key: str) -> None:
+        super().__init__(coordinator, key)
+        self._attr_translation_key = key
 
     @property
-    def extra_state_attributes(self):
+    def native_value(self) -> float | None:
+        if not self.coordinator.data:
+            return None
+        value = self.coordinator.data.get(self._data_key)
+        return round(value, 1) if value is not None else None
+
+
+class AvailablePowerSensor(_PowerSensor):
+    """Watts that can still be granted before reaching the limit."""
+
+    _data_key = "available_power"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
         if not self.coordinator.data:
             return {}
         return {
@@ -72,62 +71,38 @@ class AvailablePowerSensor(_BaseCoordinatorSensor):
         }
 
 
-class CurrentPowerSensor(_BaseCoordinatorSensor):
-    _attr_name = "Current Power Consumption"
-    _attr_native_unit_of_measurement = "W"
-    _attr_device_class = SensorDeviceClass.POWER
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:home-lightning-bolt"
+class CurrentPowerSensor(_PowerSensor):
+    """Household consumption as seen by the controller (always in W)."""
 
-    def __init__(self, coordinator, entry):
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_current_power"
-
-    @property
-    def native_value(self):
-        if self.coordinator.data:
-            return round(self.coordinator.data.get("current_power", 0), 1)
-        return None
+    _data_key = "current_power"
 
 
-class RoomStatusSensor(_BaseCoordinatorSensor):
-    _attr_icon = "mdi:thermometer"
+class RoomStatusSensor(PowerHeatingRoomEntity, SensorEntity):
+    """heating / waiting / idle / disabled."""
 
-    def __init__(self, coordinator, entry, room_id):
-        super().__init__(coordinator, entry)
-        self._room_id = room_id
-        cfg = coordinator.room_configs[room_id]
-        self._attr_name = f"{cfg.room_name} Heating Status"
-        self._attr_unique_id = f"{entry.entry_id}_{room_id}_status"
+    _attr_translation_key = "room_status"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ROOM_STATUSES
 
-    def _room_data(self):
-        if not self.coordinator.data:
-            return None
-        return self.coordinator.data.get("rooms", {}).get(self._room_id)
+    def __init__(self, coordinator, room_id: str) -> None:
+        super().__init__(coordinator, room_id, "status")
 
     @property
-    def native_value(self) -> str:
-        rd = self._room_data()
-        if rd is None:
-            return "unavailable"
-        if not rd.get("enabled"):
-            return "disabled"
-        if rd.get("demand") and rd.get("permission"):
-            return "heating"
-        if rd.get("demand") and not rd.get("permission"):
-            return "waiting"
-        return "idle"
+    def native_value(self) -> str | None:
+        return self.coordinator.room_status(self._room_id)
 
     @property
-    def extra_state_attributes(self):
-        rd = self._room_data()
-        if rd is None:
+    def extra_state_attributes(self) -> dict[str, Any]:
+        cfg = self.coordinator.room_configs.get(self._room_id)
+        state = self.coordinator.room_states.get(self._room_id)
+        if cfg is None or state is None:
             return {}
         return {
-            "demand": rd.get("demand"),
-            "permission": rd.get("permission"),
-            "deficit_c": round(rd.get("deficit", 0), 2),
-            "target_temp_c": rd.get("target_temp"),
-            "priority": rd.get("priority"),
-            "rated_power_w": rd.get("power_w"),
+            "demand": state.demand,
+            "permission": state.permission,
+            "deficit_c": round(state.deficit, 2),
+            "current_temp_c": state.current_temp,
+            "target_temp_c": cfg.target_temp,
+            "priority": cfg.priority,
+            "rated_power_w": cfg.power_w,
         }
