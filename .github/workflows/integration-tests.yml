@@ -1,0 +1,24 @@
+name: Integration tests
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ha_version: ['2025.2.0', '2026.11.2']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Home Assistant integration tests
+        env:
+          HA_VERSION: ${{ matrix.ha_version }}
+        run: |
+          docker run --rm --network none \
+            --mount "type=bind,source=${GITHUB_WORKSPACE},target=/repo,readonly" \
+            --entrypoint python "ghcr.io/home-assistant/home-assistant:${HA_VERSION}" \
+            /repo/tests/test_integration.py -v
