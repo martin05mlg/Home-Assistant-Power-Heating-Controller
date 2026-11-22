@@ -136,7 +136,9 @@
     "error": {
       "entity_not_found": "Entity not found.",
       "invalid_name": "Invalid room name.",
-      "room_exists": "A room with this name already exists."
+      "room_exists": "A room with this name already exists.",
+      "heater_shutdown_failed": "Could not confirm the heater is off. The room was kept.",
+      "not_loaded": "Load Power Heating Controller before removing a room."
     },
     "abort": {
       "room_not_found": "The room no longer exists."
@@ -166,6 +168,18 @@
           "idle": "Idle",
           "disabled": "Disabled"
         }
+      },
+      "waiting_reason": {
+        "name": "Waiting reason",
+        "state": {
+          "not_waiting": "Not waiting",
+          "insufficient_power": "Insufficient available power",
+          "power_sensor_unavailable": "Power sensor unavailable",
+          "temperature_sensor_unavailable": "Room temperature sensor unavailable",
+          "power_limit_exceeded": "Power limit exceeded",
+          "cooldown": "Pause after shedding load",
+          "pending_allocation": "Waiting for power allocation"
+        }
       }
     },
     "number": {
@@ -175,6 +189,9 @@
     }
   },
   "exceptions": {
+    "heater_shutdown_failed": {
+      "message": "Could not confirm that {entity_id} is off. The room was kept."
+    },
     "not_loaded": {
       "message": "Power Heating Controller is not loaded."
     },

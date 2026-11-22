@@ -70,7 +70,7 @@ After installing, use the setup button or go to **Settings → Devices & service
 
 For a `climate` heater, choose its heating mode (normally `heat`). The optional maximum-temperature setting is enabled by default. When a room gets permission, the controller selects the heating mode and then asks the heater to use its own maximum setpoint. The virtual thermostat still determines when to stop heating the room.
 
-To add, edit, or remove rooms or change global settings, open **Settings → Devices & services → Power Heating Controller → Configure**.
+To add, edit, or remove rooms or change global settings, open **Settings → Devices & services → Power Heating Controller → Configure**. When removing a room, the controller checks that its heater reports `off`. If Home Assistant cannot confirm that within five seconds, the room stays configured and an error is shown.
 
 ## Entities and automations
 
@@ -78,6 +78,7 @@ To add, edit, or remove rooms or change global settings, open **Settings → Dev
 | --- | --- | --- |
 | Room | Virtual thermostat (`climate`) | Set the target temperature. Select `heat` to enable the room or `off` to disable it. |
 | Room | Heating status (`sensor`) | See whether the room is `heating`, `waiting` for power, `idle`, or `disabled`. |
+| Room | Waiting reason (`sensor`) | Distinguishes insufficient power, a missing sensor reading, a power-limit breach, and a pause after shedding load. |
 | Controller | Available power and current consumption (`sensor`) | See the remaining power budget and measured consumption in W. |
 | Controller | Maximum power limit (`number`) | Change the power limit in W. |
 

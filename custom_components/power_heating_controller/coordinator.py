@@ -47,13 +47,14 @@ from homeassistant.const import (
     ATTR_SUPPORTED_FEATURES,
     ATTR_TEMPERATURE,
     ATTR_UNIT_OF_MEASUREMENT,
+    STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
     UnitOfPower,
 )
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util.unit_conversion import PowerConverter
@@ -86,6 +87,7 @@ from .const import (
     DEFAULT_TARGET_TEMP,
     DOMAIN,
     FALLBACK_HEATER_MAX_TEMP,
+    HEATER_SHUTDOWN_TIMEOUT,
     HEATER_TYPE_CLIMATE,
     MIN_ON_TIME_SECONDS,
     OVERPOWER_GRACE_SECONDS,
@@ -98,6 +100,13 @@ from .const import (
     STATUS_HEATING,
     STATUS_IDLE,
     STATUS_WAITING,
+    WAIT_ALLOCATION,
+    WAIT_COOLDOWN,
+    WAIT_NONE,
+    WAIT_OVERPOWER,
+    WAIT_POWER,
+    WAIT_POWER_SENSOR,
+    WAIT_TEMPERATURE_SENSOR,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -268,6 +277,25 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return STATUS_WAITING
         return STATUS_IDLE
 
+    def _room_waiting_reason(
+        self, room_id: str, available: float | None, power_block: str | None
+    ) -> str:
+        """Describe what is preventing this room from heating."""
+        cfg = self.room_configs[room_id]
+        state = self.room_states[room_id]
+        if not cfg.enabled or state.permission:
+            return WAIT_NONE
+        if state.current_temp is None:
+            return WAIT_TEMPERATURE_SENSOR
+        if not state.demand:
+            return WAIT_NONE
+
+        if power_block is not None:
+            return power_block
+        if available is not None and available < cfg.power_w:
+            return WAIT_POWER
+        return WAIT_ALLOCATION
+
     async def async_set_target_temp(self, room_id: str, temp: float) -> None:
         """Change a room setpoint (persisted)."""
         if cfg := self.room_configs.get(room_id):
@@ -281,6 +309,65 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             cfg.enabled = enabled
             self._async_persist()
             await self.async_refresh()
+
+    async def async_remove_room(self, room_id: str) -> None:
+        """Remove a room only after its heater is confirmed off."""
+        async with self._lock:
+            cfg = self.room_configs.get(room_id)
+            if cfg is None:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="room_not_found",
+                    translation_placeholders={"room_id": room_id},
+                )
+            try:
+                await self._async_confirm_heater_off(cfg)
+            except (HomeAssistantError, vol.Invalid, TimeoutError) as err:
+                _LOGGER.warning(
+                    "Could not confirm shutdown of %s before room removal: %s",
+                    cfg.heater_entity, str(err) or type(err).__name__,
+                )
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="heater_shutdown_failed",
+                    translation_placeholders={"entity_id": cfg.heater_entity},
+                ) from err
+
+            options = dict(self.config_entry.options)
+            options[CONF_ROOMS] = [
+                room for room in options.get(CONF_ROOMS, []) if room[CONF_ROOM_ID] != room_id
+            ]
+            self.hass.config_entries.async_update_entry(self.config_entry, options=options)
+            del self.room_configs[room_id]
+            del self.room_states[room_id]
+
+    async def _async_confirm_heater_off(self, cfg: RoomConfig) -> None:
+        """Wait for the switch or climate entity to report that it is off."""
+        state = self.hass.states.get(cfg.heater_entity)
+        if (
+            state is not None
+            and state.state == STATE_OFF
+            and not self.room_states[cfg.room_id].permission
+        ):
+            return
+
+        state_changed = asyncio.Event()
+
+        @callback
+        def _async_heater_changed(_event: Event[EventStateChangedData]) -> None:
+            state_changed.set()
+
+        unsubscribe = async_track_state_change_event(
+            self.hass, [cfg.heater_entity], _async_heater_changed
+        )
+        try:
+            async with asyncio.timeout(HEATER_SHUTDOWN_TIMEOUT):
+                await self._async_turn_heater_off(cfg, blocking=True)
+                while (state := self.hass.states.get(cfg.heater_entity)) is None or state.state != STATE_OFF:
+                    state_changed.clear()
+                    await state_changed.wait()
+        finally:
+            unsubscribe()
 
     async def async_set_max_power(self, watts: float) -> None:
         """Change the contracted power limit (persisted)."""
@@ -605,12 +692,14 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         self.room_states[room_id].last_command_at = time.monotonic()
         try:
-            if cfg.heater_type == HEATER_TYPE_CLIMATE:
-                await self._async_apply_climate(cfg, active)
+            if not active:
+                await self._async_turn_heater_off(cfg)
+            elif cfg.heater_type == HEATER_TYPE_CLIMATE:
+                await self._async_turn_climate_on(cfg)
             else:
                 await self.hass.services.async_call(
                     "switch",
-                    "turn_on" if active else "turn_off",
+                    "turn_on",
                     {ATTR_ENTITY_ID: cfg.heater_entity},
                     blocking=False,
                 )
@@ -620,16 +709,23 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 room_id, "on" if active else "off", cfg.heater_entity, err,
             )
 
-    async def _async_apply_climate(self, cfg: RoomConfig, active: bool) -> None:
-        if not active:
+    async def _async_turn_heater_off(self, cfg: RoomConfig, *, blocking: bool = False) -> None:
+        if cfg.heater_type == HEATER_TYPE_CLIMATE:
             await self.hass.services.async_call(
                 "climate",
                 "set_hvac_mode",
                 {ATTR_ENTITY_ID: cfg.heater_entity, ATTR_HVAC_MODE: HVACMode.OFF},
-                blocking=False,
+                blocking=blocking,
             )
-            return
+        else:
+            await self.hass.services.async_call(
+                "switch",
+                "turn_off",
+                {ATTR_ENTITY_ID: cfg.heater_entity},
+                blocking=blocking,
+            )
 
+    async def _async_turn_climate_on(self, cfg: RoomConfig) -> None:
         # 1. Turn on the heater in the configured HVAC mode (e.g. "heat")
         await self.hass.services.async_call(
             "climate",
@@ -688,15 +784,27 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.async_update_listeners()
 
     def _build_snapshot(self) -> dict[str, Any]:
+        now = time.monotonic()
+        current = self.get_current_power()
+        available = None if current is None else self.max_power - current - self._pending_power(now)
+        power_block = None
+        if current is None:
+            power_block = WAIT_POWER_SENSOR
+        elif current > self.max_power or self._shedding:
+            power_block = WAIT_OVERPOWER
+        elif self._in_power_ok_grace(now):
+            power_block = WAIT_COOLDOWN
+
         return {
-            "available_power": self.get_available_power(),
+            "available_power": available,
             "max_power": self.max_power,
-            "current_power": self.get_current_power(),
+            "current_power": current,
             "rooms": {
                 room_id: {
                     "name": cfg.room_name,
                     "enabled": cfg.enabled,
                     "status": self.room_status(room_id),
+                    "waiting_reason": self._room_waiting_reason(room_id, available, power_block),
                     "demand": self.room_states[room_id].demand,
                     "permission": self.room_states[room_id].permission,
                     "deficit": self.room_states[room_id].deficit,

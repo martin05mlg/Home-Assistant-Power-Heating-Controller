@@ -38,6 +38,23 @@ STATUS_IDLE = "idle"
 STATUS_DISABLED = "disabled"
 ROOM_STATUSES = [STATUS_HEATING, STATUS_WAITING, STATUS_IDLE, STATUS_DISABLED]
 
+WAIT_NONE = "not_waiting"
+WAIT_POWER = "insufficient_power"
+WAIT_POWER_SENSOR = "power_sensor_unavailable"
+WAIT_TEMPERATURE_SENSOR = "temperature_sensor_unavailable"
+WAIT_OVERPOWER = "power_limit_exceeded"
+WAIT_COOLDOWN = "cooldown"
+WAIT_ALLOCATION = "pending_allocation"
+WAIT_REASONS = [
+    WAIT_NONE,
+    WAIT_POWER,
+    WAIT_POWER_SENSOR,
+    WAIT_TEMPERATURE_SENSOR,
+    WAIT_OVERPOWER,
+    WAIT_COOLDOWN,
+    WAIT_ALLOCATION,
+]
+
 # ── Defaults ──────────────────────────────────────────────────────────────
 DEFAULT_MAX_POWER = 5500
 DEFAULT_TARGET_TEMP = 20.0
@@ -76,6 +93,8 @@ SENSOR_UNAVAILABLE_TIMEOUT = 120
 MIN_ON_TIME_SECONDS = 120
 # Minimum time between corrective commands sent to the same heater.
 RECONCILE_COOLDOWN_SECONDS = 30
+# Time allowed for Home Assistant to confirm a heater has switched off before removal.
+HEATER_SHUTDOWN_TIMEOUT = 5
 # Same-priority preemption requires the waiting room to be this much colder (°C).
 PREEMPT_DEFICIT_MARGIN = 1.0
 

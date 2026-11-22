@@ -161,17 +161,7 @@ def async_register_services(hass: HomeAssistant) -> None:
         hass.config_entries.async_update_entry(entry, options=options)
 
     async def remove_room(call: ServiceCall) -> None:
-        entry = _get_entry(hass)
-        room_id = call.data[CONF_ROOM_ID]
-        _check_room(entry.runtime_data, room_id)
-        # Turn the heater off before forgetting about it.
-        await entry.runtime_data.async_set_room_enabled(room_id, False)
-        options = copy.deepcopy(dict(entry.options))
-        options[CONF_ROOMS] = [
-            r for r in options.get(CONF_ROOMS, []) if r.get(CONF_ROOM_ID) != room_id
-        ]
-        # Reload removes the room's entities/device from the registries.
-        hass.config_entries.async_update_entry(entry, options=options)
+        await _get_coordinator(hass).async_remove_room(call.data[CONF_ROOM_ID])
 
     hass.services.async_register(DOMAIN, SERVICE_SET_MAX_POWER, set_max_power, SET_MAX_POWER_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SET_ROOM_TARGET, set_room_target, SET_ROOM_TARGET_SCHEMA)

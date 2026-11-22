@@ -13,7 +13,7 @@ from homeassistant.const import UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ROOM_STATUSES
+from .const import ROOM_STATUSES, WAIT_REASONS
 from .coordinator import PowerHeatingConfigEntry
 from .entity import PowerHeatingEntity, PowerHeatingRoomEntity
 
@@ -33,6 +33,9 @@ async def async_setup_entry(
     ]
     entities.extend(
         RoomStatusSensor(coordinator, room_id) for room_id in coordinator.room_configs
+    )
+    entities.extend(
+        RoomWaitingReasonSensor(coordinator, room_id) for room_id in coordinator.room_configs
     )
     async_add_entities(entities)
 
@@ -106,3 +109,21 @@ class RoomStatusSensor(PowerHeatingRoomEntity, SensorEntity):
             "priority": cfg.priority,
             "rated_power_w": cfg.power_w,
         }
+
+
+class RoomWaitingReasonSensor(PowerHeatingRoomEntity, SensorEntity):
+    """Explain why the room has no heating permission."""
+
+    _attr_translation_key = "waiting_reason"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = WAIT_REASONS
+
+    def __init__(self, coordinator, room_id: str) -> None:
+        super().__init__(coordinator, room_id, "waiting_reason")
+
+    @property
+    def native_value(self) -> str | None:
+        data = self.coordinator.data
+        if data is None:
+            return None
+        return data["rooms"].get(self._room_id, {}).get("waiting_reason")

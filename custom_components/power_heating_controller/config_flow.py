@@ -9,11 +9,13 @@ import voluptuous as vol
 
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
 )
 from homeassistant.core import callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.selector import (
     BooleanSelector,
     EntitySelector,
@@ -378,25 +380,35 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
 
         if user_input is not None:
             if user_input.get(DELETE_ROOM):
-                self._options[CONF_ROOMS] = [r for r in rooms if r is not room]
-                return self.async_create_entry(title="", data=self._options)
+                entry = self.config_entry
+                if entry.state is not ConfigEntryState.LOADED:
+                    errors["base"] = "not_loaded"
+                else:
+                    try:
+                        await entry.runtime_data.async_remove_room(room[CONF_ROOM_ID])
+                    except ServiceValidationError as err:
+                        if err.translation_key == "room_not_found":
+                            return self.async_abort(reason="room_not_found")
+                        errors["base"] = "heater_shutdown_failed"
+                    else:
+                        return self.async_create_entry(title="", data=dict(entry.options))
+            else:
+                name = user_input[CONF_ROOM_NAME].strip()
+                if not name:
+                    errors[CONF_ROOM_NAME] = "invalid_name"
+                if self.hass.states.get(user_input[CONF_HEATER_ENTITY]) is None:
+                    errors[CONF_HEATER_ENTITY] = "entity_not_found"
+                if self.hass.states.get(user_input[CONF_TEMP_SENSOR]) is None:
+                    errors[CONF_TEMP_SENSOR] = "entity_not_found"
 
-            name = user_input[CONF_ROOM_NAME].strip()
-            if not name:
-                errors[CONF_ROOM_NAME] = "invalid_name"
-            if self.hass.states.get(user_input[CONF_HEATER_ENTITY]) is None:
-                errors[CONF_HEATER_ENTITY] = "entity_not_found"
-            if self.hass.states.get(user_input[CONF_TEMP_SENSOR]) is None:
-                errors[CONF_TEMP_SENSOR] = "entity_not_found"
-
-            if not errors:
-                # room_id stays the same so entity IDs/history are preserved.
-                room[CONF_ROOM_NAME] = name
-                room[CONF_HEATER_ENTITY] = user_input[CONF_HEATER_ENTITY]
-                room[CONF_TEMP_SENSOR] = user_input[CONF_TEMP_SENSOR]
-                room[CONF_ENABLED] = bool(user_input[CONF_ENABLED])
-                _apply_room_settings(room, user_input)
-                return self.async_create_entry(title="", data=self._options)
+                if not errors:
+                    # room_id stays the same so entity IDs/history are preserved.
+                    room[CONF_ROOM_NAME] = name
+                    room[CONF_HEATER_ENTITY] = user_input[CONF_HEATER_ENTITY]
+                    room[CONF_TEMP_SENSOR] = user_input[CONF_TEMP_SENSOR]
+                    room[CONF_ENABLED] = bool(user_input[CONF_ENABLED])
+                    _apply_room_settings(room, user_input)
+                    return self.async_create_entry(title="", data=self._options)
 
         defaults = {**room, **(user_input or {})}
         schema: dict = {

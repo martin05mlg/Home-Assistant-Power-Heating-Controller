@@ -136,7 +136,9 @@
     "error": {
       "entity_not_found": "Entidad no encontrada.",
       "invalid_name": "Nombre de habitación no válido.",
-      "room_exists": "Ya existe una habitación con ese nombre."
+      "room_exists": "Ya existe una habitación con ese nombre.",
+      "heater_shutdown_failed": "No se ha podido confirmar que el calefactor esté apagado. Se ha conservado la habitación.",
+      "not_loaded": "Carga Power Heating Controller antes de eliminar una habitación."
     },
     "abort": {
       "room_not_found": "La habitación ya no existe."
@@ -166,6 +168,18 @@
           "idle": "En reposo",
           "disabled": "Desactivada"
         }
+      },
+      "waiting_reason": {
+        "name": "Motivo de espera",
+        "state": {
+          "not_waiting": "Sin espera",
+          "insufficient_power": "Potencia disponible insuficiente",
+          "power_sensor_unavailable": "Sensor de potencia no disponible",
+          "temperature_sensor_unavailable": "Sensor de temperatura no disponible",
+          "power_limit_exceeded": "Límite de potencia superado",
+          "cooldown": "Pausa tras reducir la carga",
+          "pending_allocation": "Pendiente de asignación de potencia"
+        }
       }
     },
     "number": {
@@ -175,6 +189,9 @@
     }
   },
   "exceptions": {
+    "heater_shutdown_failed": {
+      "message": "No se ha podido confirmar que {entity_id} esté apagado. Se ha conservado la habitación."
+    },
     "not_loaded": {
       "message": "Power Heating Controller no está cargado."
     },

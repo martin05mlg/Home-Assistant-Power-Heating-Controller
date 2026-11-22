@@ -145,6 +145,7 @@ def _async_setup_devices(
     for room_id in coordinator.room_configs:
         valid_unique_ids.add(f"{entry_id}_{room_id}_climate")
         valid_unique_ids.add(f"{entry_id}_{room_id}_status")
+        valid_unique_ids.add(f"{entry_id}_{room_id}_waiting_reason")
         valid_devices.add(room_device_identifier(entry_id, room_id))
 
     for entity in er.async_entries_for_config_entry(ent_reg, entry_id):
