@@ -156,6 +156,10 @@ The power-burst test sends 120 readings to a controller with four idle rooms and
 
 ## Changelog
 
+### 2.1.1
+
+- Provides a distinct update for installations that already reported 2.1.0 from the default branch before the first GitHub release. This update includes confirmed heater shutdown before replacement and fewer redundant entity state writes.
+
 ### 2.1.0
 
 - Choose a heating mode from the modes reported by the selected heater. When replacing a heater, the controller confirms that the old device is off before saving.
