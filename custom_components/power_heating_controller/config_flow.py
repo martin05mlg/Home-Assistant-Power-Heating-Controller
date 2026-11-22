@@ -7,6 +7,7 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.components.climate import ATTR_HVAC_MODES, HVACMode
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigEntryState,
@@ -14,7 +15,7 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlow,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -73,6 +74,8 @@ ACTION_GLOBAL = "__global__"
 ACTION_ADD = "__add__"
 DELETE_ROOM = "delete_room"
 ADD_ANOTHER = "add_another"
+
+NON_HEATING_MODES = {HVACMode.OFF, HVACMode.COOL, HVACMode.DRY, HVACMode.FAN_ONLY}
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────────
@@ -138,7 +141,38 @@ def _room_entities_fields(heater_type: str, room: dict[str, Any]) -> dict:
     }
 
 
-def _room_settings_fields(heater_type: str, room: dict[str, Any]) -> dict:
+def _heating_modes(hass: HomeAssistant, entity_id: str) -> list[str] | None:
+    """Return advertised heating modes or None if the device has no mode data."""
+    state = hass.states.get(entity_id)
+    modes = state.attributes.get(ATTR_HVAC_MODES) if state else None
+    if not isinstance(modes, (list, tuple)) or not modes:
+        return None
+    eligible = (
+        mode for mode in modes
+        if isinstance(mode, str) and mode and mode not in NON_HEATING_MODES
+    )
+    return list(dict.fromkeys(eligible))
+
+
+def _heating_mode_field(modes: list[str], saved_mode: str | None = None) -> dict:
+    """Build a selector that stores the raw HVAC mode advertised by the heater."""
+    default = DEFAULT_HVAC_MODE_HEAT if DEFAULT_HVAC_MODE_HEAT in modes else modes[0]
+    if saved_mode in modes:
+        default = saved_mode
+    return {
+        vol.Required(CONF_HVAC_MODE_HEAT, default=default): SelectSelector(
+            SelectSelectorConfig(
+                options=modes,
+                mode=SelectSelectorMode.DROPDOWN,
+                translation_key="heating_mode",
+            )
+        )
+    }
+
+
+def _room_settings_fields(
+    heater_type: str, room: dict[str, Any], modes: list[str] | None = None
+) -> dict:
     fields: dict = {
         vol.Required(CONF_TARGET_TEMP, default=room.get(CONF_TARGET_TEMP, DEFAULT_TARGET_TEMP)): NumberSelector(
             NumberSelectorConfig(
@@ -157,7 +191,8 @@ def _room_settings_fields(heater_type: str, room: dict[str, Any]) -> dict:
         ),
     }
     if heater_type == HEATER_TYPE_CLIMATE:
-        fields[vol.Required(CONF_HVAC_MODE_HEAT, default=room.get(CONF_HVAC_MODE_HEAT, DEFAULT_HVAC_MODE_HEAT))] = TextSelector()
+        if modes:
+            fields.update(_heating_mode_field(modes, room.get(CONF_HVAC_MODE_HEAT)))
         fields[vol.Required(CONF_FORCE_MAX_TEMP, default=room.get(CONF_FORCE_MAX_TEMP, DEFAULT_FORCE_MAX_TEMP))] = BooleanSelector()
     return fields
 
@@ -167,7 +202,8 @@ def _apply_room_settings(room: dict[str, Any], user_input: dict[str, Any]) -> No
     room[CONF_POWER_W] = int(user_input[CONF_POWER_W])
     room[CONF_PRIORITY] = int(user_input[CONF_PRIORITY])
     if room.get(CONF_HEATER_TYPE) == HEATER_TYPE_CLIMATE:
-        room[CONF_HVAC_MODE_HEAT] = (user_input.get(CONF_HVAC_MODE_HEAT) or DEFAULT_HVAC_MODE_HEAT).strip()
+        if CONF_HVAC_MODE_HEAT in user_input:
+            room[CONF_HVAC_MODE_HEAT] = user_input[CONF_HVAC_MODE_HEAT]
         room[CONF_FORCE_MAX_TEMP] = bool(user_input.get(CONF_FORCE_MAX_TEMP, DEFAULT_FORCE_MAX_TEMP))
 
 
@@ -213,8 +249,14 @@ class _AddRoomStepsMixin:
     async def async_step_room_heater_entity(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            if self.hass.states.get(user_input[CONF_HEATER_ENTITY]) is None:  # type: ignore[attr-defined]
+            heater = user_input[CONF_HEATER_ENTITY]
+            if self.hass.states.get(heater) is None:  # type: ignore[attr-defined]
                 errors[CONF_HEATER_ENTITY] = "entity_not_found"
+            elif (
+                self._new_room[CONF_HEATER_TYPE] == HEATER_TYPE_CLIMATE
+                and not _heating_modes(self.hass, heater)
+            ):
+                errors[CONF_HEATER_ENTITY] = "no_heating_modes"
             if self.hass.states.get(user_input[CONF_TEMP_SENSOR]) is None:  # type: ignore[attr-defined]
                 errors[CONF_TEMP_SENSOR] = "entity_not_found"
             if not errors:
@@ -231,18 +273,30 @@ class _AddRoomStepsMixin:
         )
 
     async def async_step_room_settings(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        if user_input is not None:
-            room = self._new_room
+        room = self._new_room
+        heater_type = room[CONF_HEATER_TYPE]
+        modes = None
+        errors: dict[str, str] = {}
+        if heater_type == HEATER_TYPE_CLIMATE:
+            modes = _heating_modes(self.hass, room[CONF_HEATER_ENTITY])
+            if not modes:
+                return await self.async_step_room_heater_entity({
+                    CONF_HEATER_ENTITY: room[CONF_HEATER_ENTITY],
+                    CONF_TEMP_SENSOR: room[CONF_TEMP_SENSOR],
+                })
+            if user_input is not None and user_input.get(CONF_HVAC_MODE_HEAT) not in modes:
+                errors[CONF_HVAC_MODE_HEAT] = "invalid_heating_mode"
+        if user_input is not None and not errors:
             _apply_room_settings(room, user_input)
             room[CONF_ENABLED] = True
             self._new_room = {}
             return await self._async_room_added(room)
 
-        heater_type = self._new_room[CONF_HEATER_TYPE]
         return self.async_show_form(  # type: ignore[attr-defined]
             step_id="room_settings",
-            data_schema=vol.Schema(_room_settings_fields(heater_type, {})),
-            description_placeholders={"room_name": self._new_room[CONF_ROOM_NAME]},
+            data_schema=vol.Schema(_room_settings_fields(heater_type, user_input or {}, modes)),
+            errors=errors,
+            description_placeholders={"room_name": room[CONF_ROOM_NAME]},
         )
 
 
@@ -315,6 +369,7 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
     def __init__(self) -> None:
         self._options: dict[str, Any] = {}
         self._selected_room_id: str | None = None
+        self._edited_room: dict[str, Any] = {}
         self._new_room = {}
 
     def _rooms(self) -> list[dict[str, Any]]:
@@ -337,18 +392,22 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
             self._selected_room_id = action
             return await self.async_step_edit_room()
 
-        actions = [{"value": ACTION_GLOBAL, "label": "⚡ Power limit, sensor & tolerances"}]
-        actions += [
-            {"value": r[CONF_ROOM_ID], "label": f"🏠 {r[CONF_ROOM_NAME]}"} for r in self._rooms()
-        ]
-        actions.append({"value": ACTION_ADD, "label": "➕ Add new room"})
+        actions = [{"value": ACTION_GLOBAL, "label": "Power limit, sensor and tolerances"}]
+        actions.extend(
+            {"value": r[CONF_ROOM_ID], "label": r[CONF_ROOM_NAME]} for r in self._rooms()
+        )
+        actions.append({"value": ACTION_ADD, "label": "Add room"})
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Required("action"): SelectSelector(
-                        SelectSelectorConfig(options=actions, mode=SelectSelectorMode.LIST)
+                        SelectSelectorConfig(
+                            options=actions,
+                            mode=SelectSelectorMode.LIST,
+                            translation_key="room_action",
+                        )
                     )
                 }
             ),
@@ -370,51 +429,62 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
         )
 
     async def async_step_edit_room(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        rooms = self._rooms()
-        room = next((r for r in rooms if r[CONF_ROOM_ID] == self._selected_room_id), None)
+        room = self._selected_room()
         if room is None:
             return self.async_abort(reason="room_not_found")
 
         heater_type = room.get(CONF_HEATER_TYPE, HEATER_TYPE_CLIMATE)
-        errors: dict[str, str] = {}
+        modes = None
+        if heater_type == HEATER_TYPE_CLIMATE:
+            modes = _heating_modes(self.hass, room[CONF_HEATER_ENTITY])
+            saved_mode = room.get(CONF_HVAC_MODE_HEAT, DEFAULT_HVAC_MODE_HEAT)
+            if modes is None and saved_mode and saved_mode not in NON_HEATING_MODES:
+                modes = [saved_mode]
 
+        errors: dict[str, str] = {}
         if user_input is not None:
             if user_input.get(DELETE_ROOM):
-                entry = self.config_entry
-                if entry.state is not ConfigEntryState.LOADED:
-                    errors["base"] = "not_loaded"
-                else:
-                    try:
-                        await entry.runtime_data.async_remove_room(room[CONF_ROOM_ID])
-                    except ServiceValidationError as err:
-                        if err.translation_key == "room_not_found":
-                            return self.async_abort(reason="room_not_found")
-                        errors["base"] = "heater_shutdown_failed"
-                    else:
-                        return self.async_create_entry(title="", data=dict(entry.options))
-            else:
-                name = user_input[CONF_ROOM_NAME].strip()
-                if not name:
-                    errors[CONF_ROOM_NAME] = "invalid_name"
-                if self.hass.states.get(user_input[CONF_HEATER_ENTITY]) is None:
-                    errors[CONF_HEATER_ENTITY] = "entity_not_found"
-                if self.hass.states.get(user_input[CONF_TEMP_SENSOR]) is None:
-                    errors[CONF_TEMP_SENSOR] = "entity_not_found"
+                return await self.async_step_confirm_remove_room()
 
-                if not errors:
-                    # room_id stays the same so entity IDs/history are preserved.
-                    room[CONF_ROOM_NAME] = name
-                    room[CONF_HEATER_ENTITY] = user_input[CONF_HEATER_ENTITY]
-                    room[CONF_TEMP_SENSOR] = user_input[CONF_TEMP_SENSOR]
-                    room[CONF_ENABLED] = bool(user_input[CONF_ENABLED])
-                    _apply_room_settings(room, user_input)
-                    return self.async_create_entry(title="", data=self._options)
+            name = user_input[CONF_ROOM_NAME].strip()
+            heater = user_input[CONF_HEATER_ENTITY]
+            changing_climate = (
+                heater_type == HEATER_TYPE_CLIMATE and heater != room[CONF_HEATER_ENTITY]
+            )
+            if not name:
+                errors[CONF_ROOM_NAME] = "invalid_name"
+            if self.hass.states.get(heater) is None:
+                errors[CONF_HEATER_ENTITY] = "entity_not_found"
+            elif changing_climate:
+                if not _heating_modes(self.hass, heater):
+                    errors[CONF_HEATER_ENTITY] = "no_heating_modes"
+            elif modes and user_input.get(CONF_HVAC_MODE_HEAT) not in modes:
+                errors[CONF_HVAC_MODE_HEAT] = "invalid_heating_mode"
+            if self.hass.states.get(user_input[CONF_TEMP_SENSOR]) is None:
+                errors[CONF_TEMP_SENSOR] = "entity_not_found"
+
+            if not errors:
+                # Keep the room ID so its entity IDs and history are preserved.
+                self._edited_room = {
+                    **room,
+                    CONF_ROOM_NAME: name,
+                    CONF_HEATER_ENTITY: heater,
+                    CONF_TEMP_SENSOR: user_input[CONF_TEMP_SENSOR],
+                    CONF_ENABLED: bool(user_input[CONF_ENABLED]),
+                }
+                settings = dict(user_input)
+                if changing_climate or not modes:
+                    settings.pop(CONF_HVAC_MODE_HEAT, None)
+                _apply_room_settings(self._edited_room, settings)
+                if changing_climate:
+                    return await self.async_step_edit_room_hvac()
+                return self._save_edited_room()
 
         defaults = {**room, **(user_input or {})}
         schema: dict = {
             vol.Required(CONF_ROOM_NAME, default=defaults.get(CONF_ROOM_NAME, "")): TextSelector(),
             **_room_entities_fields(heater_type, defaults),
-            **_room_settings_fields(heater_type, defaults),
+            **_room_settings_fields(heater_type, defaults, modes),
             vol.Required(CONF_ENABLED, default=defaults.get(CONF_ENABLED, True)): BooleanSelector(),
             vol.Optional(DELETE_ROOM, default=False): BooleanSelector(),
         }
@@ -424,6 +494,78 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
             errors=errors,
             description_placeholders={"room_name": room[CONF_ROOM_NAME], "room_id": room[CONF_ROOM_ID]},
         )
+
+    async def async_step_edit_room_hvac(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        room = self._edited_room
+        modes = _heating_modes(self.hass, room[CONF_HEATER_ENTITY])
+        if not modes:
+            return await self.async_step_edit_room(room)
+
+        errors = {}
+        if user_input is not None:
+            mode = user_input[CONF_HVAC_MODE_HEAT]
+            if mode in modes:
+                room[CONF_HVAC_MODE_HEAT] = mode
+                return self._save_edited_room()
+            errors[CONF_HVAC_MODE_HEAT] = "invalid_heating_mode"
+        return self.async_show_form(
+            step_id="edit_room_hvac",
+            data_schema=vol.Schema(_heating_mode_field(modes)),
+            errors=errors,
+            description_placeholders={"room_name": room[CONF_ROOM_NAME]},
+        )
+
+    async def async_step_confirm_remove_room(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        room = self._selected_room()
+        if room is None:
+            return self.async_abort(reason="room_not_found")
+
+        errors = {}
+        if user_input is not None:
+            entry = self.config_entry
+            if entry.state is not ConfigEntryState.LOADED:
+                errors["base"] = "not_loaded"
+            else:
+                try:
+                    await entry.runtime_data.async_remove_room(room[CONF_ROOM_ID])
+                except ServiceValidationError as err:
+                    if err.translation_key == "room_not_found":
+                        return self.async_abort(reason="room_not_found")
+                    errors["base"] = "heater_shutdown_failed"
+                else:
+                    return self.async_create_entry(title="", data=dict(entry.options))
+
+        return self.async_show_form(
+            step_id="confirm_remove_room",
+            data_schema=vol.Schema({}),
+            errors=errors,
+            description_placeholders={"room_name": room[CONF_ROOM_NAME]},
+        )
+
+    def _selected_room(self) -> dict[str, Any] | None:
+        return next((room for room in self._rooms() if room[CONF_ROOM_ID] == self._selected_room_id), None)
+
+    def _save_edited_room(self) -> ConfigFlowResult:
+        original = self._selected_room()
+        if original is None:
+            return self.async_abort(reason="room_not_found")
+
+        changes = {
+            key: value for key, value in self._edited_room.items() if original.get(key) != value
+        }
+        if CONF_HEATER_ENTITY in changes and CONF_HVAC_MODE_HEAT in self._edited_room:
+            changes[CONF_HVAC_MODE_HEAT] = self._edited_room[CONF_HVAC_MODE_HEAT]
+
+        options = dict(self.config_entry.options or self.config_entry.data)
+        rooms = list(options.get(CONF_ROOMS, []))
+        for index, room in enumerate(rooms):
+            if room[CONF_ROOM_ID] == self._selected_room_id:
+                rooms[index] = {**room, **changes}
+                options[CONF_ROOMS] = rooms
+                return self.async_create_entry(title="", data=options)
+        return self.async_abort(reason="room_not_found")
 
     # Add-room mixin hooks
     def _existing_room_ids(self) -> set[str]:

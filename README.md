@@ -68,9 +68,13 @@ After installing, use the setup button or go to **Settings → Devices & service
 | Each room | A room name, a temperature sensor reporting in °C, and a physical heater controlled by a `switch` or `climate` entity. |
 | Heating preferences | The heater's rated power in W, the room target temperature, and its priority from 1 to 10. |
 
-For a `climate` heater, choose its heating mode (normally `heat`). The optional maximum-temperature setting is enabled by default. When a room gets permission, the controller selects the heating mode and then asks the heater to use its own maximum setpoint. The virtual thermostat still determines when to stop heating the room.
+For a `climate` heater, pick a heating mode from the dropdown. It lists the modes the device reports that can be used for heating, such as **Heat**, **Heat and cool**, or **Automatic**. If a new heater reports no heating modes, check that it is available in Home Assistant or choose another entity. When an existing heater temporarily provides no mode data, the editor can keep its saved heating mode.
 
-To add, edit, or remove rooms or change global settings, open **Settings → Devices & services → Power Heating Controller → Configure**. When removing a room, the controller checks that its heater reports `off`. If Home Assistant cannot confirm that within five seconds, the room stays configured and an error is shown.
+The optional maximum-temperature setting is enabled by default. When a room gets permission, the controller selects the heating mode and then asks the heater to use its own maximum setpoint. The virtual thermostat determines when to stop heating the room.
+
+Open **Settings → Devices & services → Power Heating Controller → Configure** to change the power limit, add a room or edit an existing room. If you replace a `climate` heater, choose a mode for the new device in the next step.
+
+To remove a room, open it under **Configure**, select **Delete this room**, and confirm with **Remove room** on the next screen. Home Assistant must confirm that the heater reports `off` before removing the room. If it cannot confirm the shutdown within five seconds, the room stays configured and an error is shown.
 
 ## Entities and automations
 
@@ -102,6 +106,7 @@ Find the `room_id` in the virtual thermostat's state attributes.
 
 ## Changelog
 
+- **Unreleased** adds a heating-mode dropdown based on the selected device, translates the options menu, and asks for confirmation before removing a room.
 - **2.0.1** updates the climate and device registry APIs, fixes loading on Home Assistant 2025.2, and adds local branding for Home Assistant 2026.3 and newer.
 - **2.0.0** added power reservations, load shedding and heater reconciliation, and improved room priorities, sensor outage handling and settings persistence. [Changes in 2.0.0](https://github.com/martin05mlg/Home-Assistant-Power-Heating-Controller/commit/663d643)
 - **1.1.0** fixed options editing, service registration and entity registry cleanup.

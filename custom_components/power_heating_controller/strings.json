@@ -43,7 +43,7 @@
           "force_max_temp": "Set the heater to its maximum temperature when heating"
         },
         "data_description": {
-          "hvac_mode_heat": "Usually `heat`. Some thermostats use `auto` or `manual`.",
+          "hvac_mode_heat": "Choose a heating mode reported by the heater.",
           "force_max_temp": "Recommended: the controller decides when to stop, so the device should not stop on its own."
         }
       },
@@ -57,6 +57,8 @@
     },
     "error": {
       "entity_not_found": "Entity not found.",
+      "no_heating_modes": "This entity reports no heating modes. Check the device or select another one.",
+      "invalid_heating_mode": "This mode is no longer available. Select another one.",
       "invalid_name": "Invalid room name.",
       "room_exists": "A room with this name already exists."
     },
@@ -102,9 +104,21 @@
           "delete_room": "Delete this room"
         },
         "data_description": {
-          "hvac_mode_heat": "Usually `heat`. Some thermostats use `auto` or `manual`.",
-          "delete_room": "The heater is turned off and the room entities are removed."
+          "hvac_mode_heat": "If you change heaters, you will choose a mode for the new device in the next step.",
+          "delete_room": "Open a confirmation step before switching off the heater and removing the room."
         }
+      },
+      "edit_room_hvac": {
+        "title": "Heating mode for {room_name}",
+        "description": "Choose a heating mode reported by the heater.",
+        "data": {
+          "hvac_mode_heat": "HVAC mode used to heat"
+        }
+      },
+      "confirm_remove_room": {
+        "title": "Remove {room_name}",
+        "description": "The heater will be switched off. Once Home Assistant confirms it is off, the room and its entities will be removed.",
+        "submit": "Remove room"
       },
       "room_heater_type": {
         "title": "New room — step 1 of 3",
@@ -135,6 +149,8 @@
     },
     "error": {
       "entity_not_found": "Entity not found.",
+      "no_heating_modes": "This entity reports no heating modes. Check the device or select another one.",
+      "invalid_heating_mode": "This mode is no longer available. Select another one.",
       "invalid_name": "Invalid room name.",
       "room_exists": "A room with this name already exists.",
       "heater_shutdown_failed": "Could not confirm the heater is off. The room was kept.",
@@ -145,6 +161,20 @@
     }
   },
   "selector": {
+    "room_action": {
+      "options": {
+        "__global__": "Power limit, sensor and tolerances",
+        "__add__": "Add room"
+      }
+    },
+    "heating_mode": {
+      "options": {
+        "heat": "Heat",
+        "heat_cool": "Heat and cool",
+        "auto": "Automatic",
+        "manual": "Manual"
+      }
+    },
     "heater_type": {
       "options": {
         "climate": "Climate entity (thermostat, radiator, heat pump…)",

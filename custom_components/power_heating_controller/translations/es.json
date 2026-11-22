@@ -43,7 +43,7 @@
           "force_max_temp": "Poner el calefactor a su temperatura máxima al calentar"
         },
         "data_description": {
-          "hvac_mode_heat": "Normalmente `heat`. Algunos termostatos usan `auto` o `manual`.",
+          "hvac_mode_heat": "Elige uno de los modos de calefacción que anuncia la entidad.",
           "force_max_temp": "Recomendado: el controlador decide cuándo parar, así que el dispositivo no debe pararse por su cuenta."
         }
       },
@@ -57,6 +57,8 @@
     },
     "error": {
       "entity_not_found": "Entidad no encontrada.",
+      "no_heating_modes": "La entidad no anuncia ningún modo de calefacción. Comprueba el dispositivo o elige otro.",
+      "invalid_heating_mode": "Ese modo ya no está disponible. Elige otro.",
       "invalid_name": "Nombre de habitación no válido.",
       "room_exists": "Ya existe una habitación con ese nombre."
     },
@@ -102,9 +104,21 @@
           "delete_room": "Eliminar esta habitación"
         },
         "data_description": {
-          "hvac_mode_heat": "Normalmente `heat`. Algunos termostatos usan `auto` o `manual`.",
-          "delete_room": "Se apaga el calefactor y se eliminan las entidades de la habitación."
+          "hvac_mode_heat": "Si cambias de calefactor, elegirás el modo del nuevo dispositivo en el paso siguiente.",
+          "delete_room": "Abre un paso de confirmación antes de apagar el calefactor y eliminar la habitación."
         }
+      },
+      "edit_room_hvac": {
+        "title": "Modo de calefacción de {room_name}",
+        "description": "Elige uno de los modos de calefacción que anuncia la entidad.",
+        "data": {
+          "hvac_mode_heat": "Modo HVAC para calentar"
+        }
+      },
+      "confirm_remove_room": {
+        "title": "Eliminar {room_name}",
+        "description": "Se apagará el calefactor y, cuando Home Assistant confirme el apagado, se eliminarán la habitación y sus entidades.",
+        "submit": "Eliminar habitación"
       },
       "room_heater_type": {
         "title": "Nueva habitación — paso 1 de 3",
@@ -135,6 +149,8 @@
     },
     "error": {
       "entity_not_found": "Entidad no encontrada.",
+      "no_heating_modes": "La entidad no anuncia ningún modo de calefacción. Comprueba el dispositivo o elige otro.",
+      "invalid_heating_mode": "Ese modo ya no está disponible. Elige otro.",
       "invalid_name": "Nombre de habitación no válido.",
       "room_exists": "Ya existe una habitación con ese nombre.",
       "heater_shutdown_failed": "No se ha podido confirmar que el calefactor esté apagado. Se ha conservado la habitación.",
@@ -145,6 +161,20 @@
     }
   },
   "selector": {
+    "room_action": {
+      "options": {
+        "__global__": "Límite de potencia, sensor y tolerancias",
+        "__add__": "Añadir habitación"
+      }
+    },
+    "heating_mode": {
+      "options": {
+        "heat": "Calor",
+        "heat_cool": "Calor y frío",
+        "auto": "Automático",
+        "manual": "Manual"
+      }
+    },
     "heater_type": {
       "options": {
         "climate": "Entidad climate (termostato, radiador, bomba de calor…)",
