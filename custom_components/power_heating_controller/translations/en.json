@@ -154,10 +154,13 @@
       "invalid_name": "Invalid room name.",
       "room_exists": "A room with this name already exists.",
       "heater_shutdown_failed": "Could not confirm the heater is off. The room was kept.",
-      "not_loaded": "Load Power Heating Controller before removing a room."
+      "not_loaded": "Load Power Heating Controller before removing a room.",
+      "replacement_not_loaded": "Load Power Heating Controller before replacing a heater.",
+      "heater_replacement_failed": "The previous heater did not confirm it was off. The original configuration was kept."
     },
     "abort": {
-      "room_not_found": "The room no longer exists."
+      "room_not_found": "The room no longer exists.",
+      "room_changed": "This room's heater changed. Reopen the configuration to continue."
     }
   },
   "selector": {
@@ -219,6 +222,9 @@
     }
   },
   "exceptions": {
+    "room_changed": {
+      "message": "This room's heater changed. Reopen the configuration to continue."
+    },
     "heater_shutdown_failed": {
       "message": "Could not confirm that {entity_id} is off. The room was kept."
     },

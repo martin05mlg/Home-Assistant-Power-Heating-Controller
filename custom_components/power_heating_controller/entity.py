@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -25,19 +26,44 @@ def room_device_identifier(entry_id: str, room_id: str) -> tuple[str, str]:
     return (DOMAIN, f"{entry_id}_{room_id}")
 
 
-class PowerHeatingEntity(CoordinatorEntity[PowerHeatingCoordinator]):
+class _PowerHeatingCoordinatorEntity(CoordinatorEntity[PowerHeatingCoordinator]):
+    """Publish to Home Assistant only when this entity's inputs change."""
+
+    def _coordinator_observation(self) -> object:
+        raise NotImplementedError
+
+    async def async_added_to_hass(self) -> None:
+        self._last_observation = (self.available, self._coordinator_observation())
+        await super().async_added_to_hass()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        observation = (self.available, self._coordinator_observation())
+        if observation != self._last_observation:
+            self._last_observation = observation
+            super()._handle_coordinator_update()
+
+
+class PowerHeatingEntity(_PowerHeatingCoordinatorEntity):
     """Global entity attached to the hub device."""
 
     _attr_has_entity_name = True
+    _coordinator_fields: tuple[str, ...] = ()
 
     def __init__(self, coordinator: PowerHeatingCoordinator, key: str) -> None:
         super().__init__(coordinator)
+        self._coordinator_key = key
         entry_id = coordinator.config_entry.entry_id
         self._attr_unique_id = f"{entry_id}_{key}"
         self._attr_device_info = hub_device_info(entry_id)
 
+    def _coordinator_observation(self) -> object:
+        data = self.coordinator.data or {}
+        keys = self._coordinator_fields or (self._coordinator_key,)
+        return tuple(data.get(key) for key in keys)
 
-class PowerHeatingRoomEntity(CoordinatorEntity[PowerHeatingCoordinator]):
+
+class PowerHeatingRoomEntity(_PowerHeatingCoordinatorEntity):
     """Entity attached to a room device."""
 
     _attr_has_entity_name = True
@@ -67,4 +93,8 @@ class PowerHeatingRoomEntity(CoordinatorEntity[PowerHeatingCoordinator]):
     def available(self) -> bool:
         """Unavailable if the room no longer exists."""
         return super().available and self.coordinator.has_room(self._room_id)
+
+    def _coordinator_observation(self) -> object:
+        data = self.coordinator.data
+        return data["rooms"].get(self._room_id) if data else None
 

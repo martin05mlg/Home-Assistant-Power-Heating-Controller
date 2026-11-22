@@ -154,10 +154,13 @@
       "invalid_name": "Nombre de habitación no válido.",
       "room_exists": "Ya existe una habitación con ese nombre.",
       "heater_shutdown_failed": "No se ha podido confirmar que el calefactor esté apagado. Se ha conservado la habitación.",
-      "not_loaded": "Carga Power Heating Controller antes de eliminar una habitación."
+      "not_loaded": "Carga Power Heating Controller antes de eliminar una habitación.",
+      "replacement_not_loaded": "Carga Power Heating Controller antes de sustituir un calefactor.",
+      "heater_replacement_failed": "No se ha confirmado el apagado del calefactor anterior. Se ha conservado la configuración original."
     },
     "abort": {
-      "room_not_found": "La habitación ya no existe."
+      "room_not_found": "La habitación ya no existe.",
+      "room_changed": "El calefactor de esta habitación ha cambiado. Vuelve a abrir la configuración para continuar."
     }
   },
   "selector": {
@@ -219,6 +222,9 @@
     }
   },
   "exceptions": {
+    "room_changed": {
+      "message": "El calefactor de esta habitación ha cambiado. Vuelve a abrir la configuración para continuar."
+    },
     "heater_shutdown_failed": {
       "message": "No se ha podido confirmar que {entity_id} esté apagado. Se ha conservado la habitación."
     },

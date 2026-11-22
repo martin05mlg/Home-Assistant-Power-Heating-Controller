@@ -63,6 +63,7 @@ class AvailablePowerSensor(_PowerSensor):
     """Watts that can still be granted before reaching the limit."""
 
     _data_key = "available_power"
+    _coordinator_fields = ("available_power", "current_power", "max_power")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -127,3 +128,6 @@ class RoomWaitingReasonSensor(PowerHeatingRoomEntity, SensorEntity):
         if data is None:
             return None
         return data["rooms"].get(self._room_id, {}).get("waiting_reason")
+
+    def _coordinator_observation(self) -> object:
+        return self.native_value

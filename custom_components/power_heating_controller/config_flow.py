@@ -478,7 +478,10 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
                 _apply_room_settings(self._edited_room, settings)
                 if changing_climate:
                     return await self.async_step_edit_room_hvac()
-                return self._save_edited_room()
+                result, save_error = await self._async_save_edited_room()
+                if result is not None:
+                    return result
+                errors["base"] = save_error
 
         defaults = {**room, **(user_input or {})}
         schema: dict = {
@@ -506,11 +509,15 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
             mode = user_input[CONF_HVAC_MODE_HEAT]
             if mode in modes:
                 room[CONF_HVAC_MODE_HEAT] = mode
-                return self._save_edited_room()
-            errors[CONF_HVAC_MODE_HEAT] = "invalid_heating_mode"
+                result, save_error = await self._async_save_edited_room()
+                if result is not None:
+                    return result
+                errors["base"] = save_error
+            else:
+                errors[CONF_HVAC_MODE_HEAT] = "invalid_heating_mode"
         return self.async_show_form(
             step_id="edit_room_hvac",
-            data_schema=vol.Schema(_heating_mode_field(modes)),
+            data_schema=vol.Schema(_heating_mode_field(modes, (user_input or {}).get(CONF_HVAC_MODE_HEAT))),
             errors=errors,
             description_placeholders={"room_name": room[CONF_ROOM_NAME]},
         )
@@ -533,6 +540,8 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
                 except ServiceValidationError as err:
                     if err.translation_key == "room_not_found":
                         return self.async_abort(reason="room_not_found")
+                    if err.translation_key == "room_changed":
+                        return self.async_abort(reason="room_changed")
                     errors["base"] = "heater_shutdown_failed"
                 else:
                     return self.async_create_entry(title="", data=dict(entry.options))
@@ -547,10 +556,10 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
     def _selected_room(self) -> dict[str, Any] | None:
         return next((room for room in self._rooms() if room[CONF_ROOM_ID] == self._selected_room_id), None)
 
-    def _save_edited_room(self) -> ConfigFlowResult:
+    async def _async_save_edited_room(self) -> tuple[ConfigFlowResult | None, str]:
         original = self._selected_room()
         if original is None:
-            return self.async_abort(reason="room_not_found")
+            return self.async_abort(reason="room_not_found"), ""
 
         changes = {
             key: value for key, value in self._edited_room.items() if original.get(key) != value
@@ -558,14 +567,30 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
         if CONF_HEATER_ENTITY in changes and CONF_HVAC_MODE_HEAT in self._edited_room:
             changes[CONF_HVAC_MODE_HEAT] = self._edited_room[CONF_HVAC_MODE_HEAT]
 
-        options = dict(self.config_entry.options or self.config_entry.data)
+        entry = self.config_entry
+        if CONF_HEATER_ENTITY in changes:
+            if entry.state is not ConfigEntryState.LOADED:
+                return None, "replacement_not_loaded"
+            try:
+                await entry.runtime_data.async_replace_room_heater(
+                    original[CONF_ROOM_ID], original[CONF_HEATER_ENTITY], changes
+                )
+            except ServiceValidationError as err:
+                if err.translation_key in {"room_not_found", "room_changed"}:
+                    return self.async_abort(reason=err.translation_key), ""
+                return None, "heater_replacement_failed"
+            return self.async_create_entry(title="", data=dict(entry.options)), ""
+
+        options = dict(entry.options or entry.data)
         rooms = list(options.get(CONF_ROOMS, []))
         for index, room in enumerate(rooms):
             if room[CONF_ROOM_ID] == self._selected_room_id:
+                if room[CONF_HEATER_ENTITY] != original[CONF_HEATER_ENTITY]:
+                    return self.async_abort(reason="room_changed"), ""
                 rooms[index] = {**room, **changes}
                 options[CONF_ROOMS] = rooms
-                return self.async_create_entry(title="", data=options)
-        return self.async_abort(reason="room_not_found")
+                return self.async_create_entry(title="", data=options), ""
+        return self.async_abort(reason="room_not_found"), ""
 
     # Add-room mixin hooks
     def _existing_room_ids(self) -> set[str]:

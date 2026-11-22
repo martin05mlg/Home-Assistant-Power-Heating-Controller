@@ -175,6 +175,7 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             config_entry=entry,
             name=DOMAIN,
             update_interval=timedelta(seconds=COORDINATOR_UPDATE_INTERVAL),
+            always_update=False,
         )
         options = entry.options
         self.power_sensor: str = options[CONF_POWER_SENSOR]
@@ -312,6 +313,20 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_remove_room(self, room_id: str) -> None:
         """Remove a room only after its heater is confirmed off."""
+        await self._async_retire_room_heater(room_id, None)
+
+    async def async_replace_room_heater(
+        self, room_id: str, old_heater: str, changes: dict[str, Any]
+    ) -> None:
+        """Save a replacement only after the previous heater is confirmed off."""
+        await self._async_retire_room_heater(room_id, changes, old_heater)
+
+    async def _async_retire_room_heater(
+        self,
+        room_id: str,
+        changes: dict[str, Any] | None,
+        old_heater: str | None = None,
+    ) -> None:
         async with self._lock:
             cfg = self.room_configs.get(room_id)
             if cfg is None:
@@ -320,11 +335,13 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     translation_key="room_not_found",
                     translation_placeholders={"room_id": room_id},
                 )
+            if old_heater is not None and cfg.heater_entity != old_heater:
+                raise ServiceValidationError(translation_domain=DOMAIN, translation_key="room_changed")
             try:
                 await self._async_confirm_heater_off(cfg)
             except (HomeAssistantError, vol.Invalid, TimeoutError) as err:
                 _LOGGER.warning(
-                    "Could not confirm shutdown of %s before room removal: %s",
+                    "Could not confirm shutdown of %s: %s",
                     cfg.heater_entity, str(err) or type(err).__name__,
                 )
                 raise ServiceValidationError(
@@ -334,9 +351,26 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ) from err
 
             options = dict(self.config_entry.options)
-            options[CONF_ROOMS] = [
-                room for room in options.get(CONF_ROOMS, []) if room[CONF_ROOM_ID] != room_id
-            ]
+            rooms = list(options.get(CONF_ROOMS, []))
+            for index, room in enumerate(rooms):
+                if room[CONF_ROOM_ID] == room_id:
+                    # Options may have changed while waiting for the device.
+                    if room[CONF_HEATER_ENTITY] != cfg.heater_entity:
+                        raise ServiceValidationError(
+                            translation_domain=DOMAIN, translation_key="room_changed"
+                        )
+                    if changes is None:
+                        rooms.pop(index)
+                    else:
+                        rooms[index] = {**room, **changes}
+                    break
+            else:
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="room_not_found",
+                    translation_placeholders={"room_id": room_id},
+                )
+            options[CONF_ROOMS] = rooms
             self.hass.config_entries.async_update_entry(self.config_entry, options=options)
             del self.room_configs[room_id]
             del self.room_states[room_id]
@@ -406,8 +440,7 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self._async_power_freed_for_waiting_room():
                 self._async_schedule_refresh()
             # Keep the power sensors live without resetting the refresh timer.
-            self.data = self._build_snapshot()
-            self.async_update_listeners()
+            self._async_publish()
             return
 
         # A temperature sensor changed.
@@ -780,7 +813,10 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def _async_publish(self) -> None:
         """Push a new snapshot to entities without resetting the refresh timer."""
-        self.data = self._build_snapshot()
+        snapshot = self._build_snapshot()
+        if snapshot == self.data:
+            return
+        self.data = snapshot
         self.async_update_listeners()
 
     def _build_snapshot(self) -> dict[str, Any]:
