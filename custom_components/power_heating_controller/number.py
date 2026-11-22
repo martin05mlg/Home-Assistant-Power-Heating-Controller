@@ -5,7 +5,7 @@ from __future__ import annotations
 from homeassistant.components.number import NumberDeviceClass, NumberEntity, NumberMode
 from homeassistant.const import EntityCategory, UnitOfPower
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import MAX_MAX_POWER, MIN_MAX_POWER
 from .coordinator import PowerHeatingConfigEntry
@@ -17,7 +17,7 @@ PARALLEL_UPDATES = 0
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: PowerHeatingConfigEntry,
-    async_add_entities: AddConfigEntryEntitiesCallback,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the max power number."""
     async_add_entities([MaxPowerNumber(entry.runtime_data, "max_power")])

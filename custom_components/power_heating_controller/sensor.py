@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import UnitOfPower
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ROOM_STATUSES
 from .coordinator import PowerHeatingConfigEntry
@@ -23,7 +23,7 @@ PARALLEL_UPDATES = 0
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: PowerHeatingConfigEntry,
-    async_add_entities: AddConfigEntryEntitiesCallback,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up global power sensors and one status sensor per room."""
     coordinator = entry.runtime_data

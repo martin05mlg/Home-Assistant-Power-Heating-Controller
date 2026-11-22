@@ -3,7 +3,7 @@
 from homeassistant.const import Platform
 
 DOMAIN = "power_heating_controller"
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 MANUFACTURER = "HAPHC"
 
 # ── Config entry keys (global) ─────────────────────────────────────────────

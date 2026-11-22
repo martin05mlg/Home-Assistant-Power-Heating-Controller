@@ -1,6 +1,7 @@
 {
   "domain": "power_heating_controller",
   "name": "Power Heating Controller",
+  "categories": ["climate.thermostats_heating"],
   "codeowners": ["@martin05mlg"],
   "config_flow": true,
   "dependencies": [],
@@ -10,5 +11,5 @@
   "issue_tracker": "https://github.com/martin05mlg/Home-Assistant-Power-Heating-Controller/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "2.0.0"
+  "version": "2.0.1"
 }

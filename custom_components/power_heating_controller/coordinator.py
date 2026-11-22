@@ -156,6 +156,7 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Manages the power-aware heating logic for all rooms."""
 
     config_entry: PowerHeatingConfigEntry
+    hub_device_id: str
 
     def __init__(self, hass: HomeAssistant, entry: PowerHeatingConfigEntry) -> None:
         """Initialise the coordinator from the config entry options."""

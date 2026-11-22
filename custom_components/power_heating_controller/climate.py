@@ -19,7 +19,7 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import MAX_TARGET_TEMP, MIN_TARGET_TEMP, TARGET_TEMP_STEP
 from .coordinator import PowerHeatingConfigEntry
@@ -31,7 +31,7 @@ PARALLEL_UPDATES = 0
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: PowerHeatingConfigEntry,
-    async_add_entities: AddConfigEntryEntitiesCallback,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up one climate entity per room."""
     coordinator = entry.runtime_data
@@ -50,7 +50,7 @@ class RoomThermostatClimate(PowerHeatingRoomEntity, ClimateEntity):
         | ClimateEntityFeature.TURN_OFF
     )
     _attr_hvac_modes = [HVACMode.HEAT, HVACMode.OFF]
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = TARGET_TEMP_STEP
     _attr_min_temp = MIN_TARGET_TEMP
     _attr_max_temp = MAX_TARGET_TEMP
@@ -59,14 +59,20 @@ class RoomThermostatClimate(PowerHeatingRoomEntity, ClimateEntity):
         super().__init__(coordinator, room_id, "climate")
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         state = self.coordinator.room_states.get(self._room_id)
         return state.current_temp if state else None
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         cfg = self.coordinator.room_configs.get(self._room_id)
         return cfg.target_temp if cfg else None
+
+    # Home Assistant before 2026.11 still reads the original climate properties.
+    if not hasattr(ClimateEntity, "native_temperature_unit"):
+        _attr_temperature_unit = _attr_native_temperature_unit
+        current_temperature = native_current_temperature
+        target_temperature = native_target_temperature
 
     @property
     def hvac_mode(self) -> HVACMode:

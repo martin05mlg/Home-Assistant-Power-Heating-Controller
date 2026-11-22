@@ -50,13 +50,17 @@ class PowerHeatingRoomEntity(CoordinatorEntity[PowerHeatingCoordinator]):
         entry_id = coordinator.config_entry.entry_id
         cfg = coordinator.room_configs[room_id]
         self._attr_unique_id = f"{entry_id}_{room_id}_{key}"
+        if "via_device_id" in DeviceInfo.__annotations__:
+            hub_link = {"via_device_id": coordinator.hub_device_id}
+        else:
+            hub_link = {"via_device": (DOMAIN, entry_id)}
         self._attr_device_info = DeviceInfo(
             identifiers={room_device_identifier(entry_id, room_id)},
             name=cfg.room_name,
             manufacturer=MANUFACTURER,
             model="Room",
             sw_version=VERSION,
-            via_device=(DOMAIN, entry_id),
+            **hub_link,
         )
 
     @property

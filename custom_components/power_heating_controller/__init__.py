@@ -61,7 +61,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: PowerHeatingConfigEntry)
     coordinator = PowerHeatingCoordinator(hass, entry)
     entry.runtime_data = coordinator
 
-    _async_setup_devices(hass, entry, coordinator)
+    coordinator.hub_device_id = _async_setup_devices(hass, entry, coordinator)
 
     await coordinator.async_setup()
     try:
@@ -121,13 +121,13 @@ def _async_setup_devices(
     hass: HomeAssistant,
     entry: PowerHeatingConfigEntry,
     coordinator: PowerHeatingCoordinator,
-) -> None:
-    """Create the hub device and remove devices/entities of deleted rooms."""
+) -> str:
+    """Return the hub device ID after removing devices and entities of deleted rooms."""
     dev_reg = dr.async_get(hass)
     ent_reg = er.async_get(hass)
     entry_id = entry.entry_id
 
-    dev_reg.async_get_or_create(
+    hub = dev_reg.async_get_or_create(
         config_entry_id=entry_id,
         identifiers={(DOMAIN, entry_id)},
         name="Power Heating Controller",
@@ -155,4 +155,9 @@ def _async_setup_devices(
     for device in dr.async_entries_for_config_entry(dev_reg, entry_id):
         if not device.identifiers & valid_devices:
             _LOGGER.info("Removing orphaned device %s", device.name)
-            dev_reg.async_update_device(device.id, remove_config_entry_id=entry_id)
+            if hasattr(device, "config_entry_id"):
+                dev_reg.async_remove_device(device.id)
+            else:
+                dev_reg.async_update_device(device.id, remove_config_entry_id=entry_id)
+
+    return hub.id
