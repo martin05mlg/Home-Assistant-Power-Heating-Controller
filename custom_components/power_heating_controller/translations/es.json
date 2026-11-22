@@ -57,6 +57,7 @@
     },
     "error": {
       "entity_not_found": "Entidad no encontrada.",
+      "heater_already_configured": "Este radiador ya está configurado. Edita sus estancias vinculadas para compartirlo.",
       "no_heating_modes": "La entidad no anuncia ningún modo de calefacción. Comprueba el dispositivo o elige otro.",
       "invalid_heating_mode": "Ese modo ya no está disponible. Elige otro.",
       "invalid_name": "Nombre de habitación no válido.",
@@ -69,6 +70,38 @@
   },
   "options": {
     "step": {
+      "radiators": {
+        "title": "Radiadores de apoyo y compartidos",
+        "data": {
+          "action": "Selecciona un radiador para editarlo o añade uno."
+        }
+      },
+      "radiator": {
+        "title": "Configurar radiador",
+        "data": {
+          "heater_entity": "Radiador",
+          "room_ids": "Estancias vinculadas",
+          "power_w": "Potencia nominal (W)",
+          "radiator_order": "Orden de encendido",
+          "delete_radiator": "Eliminar este radiador"
+        },
+        "data_description": {
+          "room_ids": "Selecciona una estancia para un radiador propio, o varias para compartirlo.",
+          "radiator_order": "A igualdad de prioridad y diferencia con la temperatura objetivo, los números más bajos se encienden antes y se apagan después."
+        }
+      },
+      "radiator_hvac": {
+        "title": "Configurar modo de calefacción",
+        "data": {
+          "hvac_mode_heat": "Modo HVAC para calentar",
+          "force_max_temp": "Usar la temperatura máxima del radiador al calentar"
+        }
+      },
+      "confirm_remove_radiator": {
+        "title": "Eliminar {radiator}",
+        "description": "El controlador confirmará que el radiador esté apagado antes de eliminarlo.",
+        "submit": "Eliminar radiador"
+      },
       "init": {
         "title": "Power Heating Controller — Opciones",
         "data": {
@@ -156,18 +189,29 @@
       "heater_shutdown_failed": "No se ha podido confirmar que el calefactor esté apagado. Se ha conservado la habitación.",
       "not_loaded": "Carga Power Heating Controller antes de eliminar una habitación.",
       "replacement_not_loaded": "Carga Power Heating Controller antes de sustituir un calefactor.",
+      "heater_already_configured": "Este radiador ya está configurado. Edita sus estancias vinculadas para compartirlo.",
+      "select_rooms": "Selecciona al menos una estancia existente.",
+      "radiators_not_loaded": "Carga Power Heating Controller antes de editar los radiadores.",
+      "room_changed": "La configuración ha cambiado. Vuelve a abrir las opciones.",
       "heater_replacement_failed": "No se ha confirmado el apagado del calefactor anterior. Se ha conservado la configuración original."
     },
     "abort": {
       "room_not_found": "La habitación ya no existe.",
-      "room_changed": "El calefactor de esta habitación ha cambiado. Vuelve a abrir la configuración para continuar."
+      "room_changed": "La configuración ha cambiado. Vuelve a abrir las opciones.",
+      "no_rooms": "Añade al menos una estancia antes de configurar un radiador."
     }
   },
   "selector": {
     "room_action": {
       "options": {
         "__global__": "Límite de potencia, sensor y tolerancias",
-        "__add__": "Añadir habitación"
+        "__add__": "Añadir habitación",
+        "__radiators__": "Radiadores de apoyo y compartidos"
+      }
+    },
+    "radiator_action": {
+      "options": {
+        "__add__": "Añadir radiador"
       }
     },
     "heating_mode": {
@@ -211,6 +255,8 @@
           "temperature_sensor_unavailable": "Sensor de temperatura no disponible",
           "power_limit_exceeded": "Límite de potencia superado",
           "cooldown": "Pausa tras reducir la carga",
+          "awaiting_shutdown": "Confirmando apagado y potencia disponible",
+          "radiator_unavailable": "Radiador principal no disponible",
           "pending_allocation": "Pendiente de asignación de potencia"
         }
       }
@@ -222,8 +268,11 @@
     }
   },
   "exceptions": {
+    "heater_already_configured": {
+      "message": "Este radiador ya está configurado. Edita sus estancias vinculadas para compartirlo."
+    },
     "room_changed": {
-      "message": "El calefactor de esta habitación ha cambiado. Vuelve a abrir la configuración para continuar."
+      "message": "La configuración ha cambiado. Vuelve a abrir las opciones."
     },
     "heater_shutdown_failed": {
       "message": "No se ha podido confirmar que {entity_id} esté apagado. Se ha conservado la habitación."

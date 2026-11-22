@@ -7,7 +7,7 @@
 
 # Power Heating Controller for Home Assistant
 
-Coordinate electric heating across rooms using your home's live power reading and a shared power limit. Each room gets a virtual thermostat. When several rooms need heat, the controller decides which heaters can run based on available power and room priority.
+Coordinate electric heating across rooms using your home's live power reading and a shared power limit. Each room gets a virtual thermostat. The controller can run several radiators in a room or share a radiator between adjoining rooms.
 
 [![Open the Marketplace repository in My Home Assistant](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=martin05mlg&repository=Home-Assistant-Power-Heating-Controller&category=integration)
 
@@ -20,14 +20,15 @@ flowchart LR
     A["Room temperature + target"] --> B["Virtual thermostat<br/>Requests heat"]
     C["Whole-home power + limit"] --> D["Power controller<br/>Checks headroom and priority"]
     B --> D
-    D --> E["Physical heater<br/>Runs or waits"]
+    D --> E["Primary radiator"]
+    D --> F["Dedicated and shared support radiators"]
 ```
 
 1. **A room requests heat.** With a 21 °C target and the default tolerances, it starts requesting heat at 20.9 °C and stops at 21.1 °C. The cold and hot tolerances are configurable.
-2. **The controller allocates power.** It subtracts measured household consumption and 30-second reservations for newly started heaters from the configured limit. It considers priority first (1 is highest, 10 lowest), then how far below target each room is.
-3. **The heater runs or the room waits.** If a room needs 1,000 W and a 4,500 W limit leaves only 900 W available, it normally waits. A higher-priority room can take over from a lower-priority room that has already heated for at least two minutes. With equal priority, the waiting room must be at least 1 °C further below its own target.
+2. **Primary radiators get power first.** The controller subtracts household consumption and 30-second start reservations from the configured limit. It considers room priority first (1 is highest, 10 lowest), then how far below target each room is. When the requested primaries have power, the controller can start support radiators with the remaining budget.
+3. **Support radiators give up power first.** If a primary needs 1,000 W and only 900 W is available, switching off a 600 W shared hallway radiator can make room while the original room keeps its primary. The controller confirms the hallway is off and waits for a fresh meter reading before starting the waiting radiator. If supports cannot cover the shortfall, a primary can give up power after at least two minutes for a room with higher priority, or for an equal-priority room at least 1 °C further below its target.
 
-If measured consumption stays above the limit for five seconds, the controller sheds managed heaters starting with the lowest-priority, least-cold rooms. It waits 20 seconds after shedding before granting new heating permissions. Other appliances can still draw more power than the managed heaters can shed.
+If measured consumption stays above the limit for five seconds, the controller sheds support radiators before primaries, starting with the lowest-priority, least-cold rooms in each group. It waits 20 seconds after shedding before granting new heating permissions. Other appliances can still draw more power than the managed heaters can shed.
 
 If the power sensor becomes unavailable, new heating permissions pause. If a room's temperature sensor stays unavailable for two minutes, the controller stops heating that room. The controller also periodically checks that heaters match their expected state.
 
@@ -65,8 +66,10 @@ After installing, use the setup button or go to **Settings → Devices & service
 | Configure | What to provide |
 | --- | --- |
 | Whole home | An instantaneous power sensor in W or kW and the power limit in W. You can also adjust the cold and hot tolerances. |
-| Each room | A room name, a temperature sensor reporting in °C, and a physical heater controlled by a `switch` or `climate` entity. |
-| Heating preferences | The heater's rated power in W, the room target temperature, and its priority from 1 to 10. |
+| Each room | A room name, a temperature sensor, and a primary radiator controlled by a `switch` or `climate` entity. |
+| Heating preferences | The primary radiator's rated power in W, the room target temperature, and its priority from 1 to 10. |
+
+The controller converts supported temperature units to °C and supported power units to W. Missing units retain the legacy defaults of °C and W. Non-finite values and unsupported units are treated as unavailable readings.
 
 For a `climate` heater, pick a heating mode from the dropdown. It lists the modes the device reports that can be used for heating, such as **Heat**, **Heat and cool**, or **Automatic**. If a new heater reports no heating modes, check that it is available in Home Assistant or choose another entity. When an existing heater temporarily provides no mode data, the editor can keep its saved heating mode.
 
@@ -76,13 +79,21 @@ Open **Settings → Devices & services → Power Heating Controller → Configur
 
 To remove a room, open it under **Configure**, select **Delete this room**, and confirm with **Remove room** on the next screen. Home Assistant must confirm that the heater reports `off` before removing the room. If it cannot confirm the shutdown within five seconds, the room stays configured and an error is shown.
 
+### Support and shared radiators
+
+Open **Configure → Support and shared radiators → Add radiator**. Choose the radiator entity, its rated wattage and the rooms it serves. Link one room for an additional radiator in that room, or link several for a shared radiator, such as an open hallway between two rooms. Set **Start order** to choose which support starts first when their room priority and temperature deficit are equal. Lower numbers start first.
+
+A shared radiator can start when any linked, enabled room with a valid temperature reading requests heat. It uses the most urgent linked room's priority and counts its wattage once, even when several rooms request it. Radiators need independently controllable entities for individual switching. Existing room heaters continue as their room's primary, with the same thermostat entity IDs.
+
+When a room is removed, shared radiators remain linked to the other rooms. Radiators that lose their final room must confirm shutdown before the removal is saved.
+
 ## Entities and automations
 
 | Location | Entity | Use |
 | --- | --- | --- |
 | Room | Virtual thermostat (`climate`) | Set the target temperature. Select `heat` to enable the room or `off` to disable it. |
-| Room | Heating status (`sensor`) | See whether the room is `heating`, `waiting` for power, `idle`, or `disabled`. |
-| Room | Waiting reason (`sensor`) | Distinguishes insufficient power, a missing sensor reading, a power-limit breach, and a pause after shedding load. |
+| Room | Heating status (`sensor`) | See whether the room has heating permission. The `radiators` attribute shows each radiator's role, reported state, HVAC action when available, and whether it needs attention. |
+| Room | Waiting reason (`sensor`) | Distinguishes insufficient power, invalid or missing sensor readings, a power-limit breach, a pause after shedding load, and waiting for shutdown and fresh meter data. |
 | Controller | Available power and current consumption (`sensor`) | See the remaining power budget and measured consumption in W. |
 | Controller | Maximum power limit (`number`) | Change the power limit in W. |
 
@@ -155,6 +166,12 @@ docker run --rm --network none \
 The power-burst test sends 120 readings to a controller with four idle rooms and 15 entities. It measured **1,800 → 240 calls to write entity state** on Home Assistant 2026.11.2, a reduction of 87% in this scenario. Both power sensors still publish every reading in the test.
 
 ## Changelog
+
+### 2.2.0
+
+- Add dedicated support radiators and radiators shared between rooms while retaining one virtual thermostat per room.
+- Prioritize primary radiators and verify shutdown and fresh meter data before transferring power.
+- Validate power and temperature readings and expose each radiator's reported state alongside its permission.
 
 ### 2.1.1
 

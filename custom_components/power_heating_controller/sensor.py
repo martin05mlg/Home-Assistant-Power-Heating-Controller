@@ -103,12 +103,13 @@ class RoomStatusSensor(PowerHeatingRoomEntity, SensorEntity):
             return {}
         return {
             "demand": state.demand,
-            "permission": state.permission,
+            "permission": self.coordinator.room_has_permission(self._room_id),
             "deficit_c": round(state.deficit, 2),
             "current_temp_c": state.current_temp,
             "target_temp_c": cfg.target_temp,
             "priority": cfg.priority,
             "rated_power_w": cfg.power_w,
+            "radiators": (self.coordinator.data or {}).get("rooms", {}).get(self._room_id, {}).get("radiators", []),
         }
 
 

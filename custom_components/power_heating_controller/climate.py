@@ -85,7 +85,7 @@ class RoomThermostatClimate(PowerHeatingRoomEntity, ClimateEntity):
         state = self.coordinator.room_states.get(self._room_id)
         if cfg is None or state is None or not cfg.enabled:
             return HVACAction.OFF
-        return HVACAction.HEATING if state.permission else HVACAction.IDLE
+        return HVACAction.HEATING if self.coordinator.room_has_permission(self._room_id) else HVACAction.IDLE
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Update the software thermostat setpoint (not pushed to the hardware)."""
@@ -111,12 +111,13 @@ class RoomThermostatClimate(PowerHeatingRoomEntity, ClimateEntity):
         state = self.coordinator.room_states.get(self._room_id)
         if cfg is None or state is None:
             return {}
+        permission = self.coordinator.room_has_permission(self._room_id)
         return {
             "room_id": self._room_id,
             "status": self.coordinator.room_status(self._room_id),
             "demand": state.demand,
-            "permission": state.permission,
-            "waiting_for_power": cfg.enabled and state.demand and not state.permission,
+            "permission": permission,
+            "waiting_for_power": cfg.enabled and state.demand and not permission,
             "thermal_deficit_c": round(state.deficit, 2),
             "priority": cfg.priority,
             "rated_power_w": cfg.power_w,

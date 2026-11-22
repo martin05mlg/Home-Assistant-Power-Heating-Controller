@@ -3,10 +3,10 @@
 This is the brain of the integration. It:
   1. Reads the household power consumption from a sensor (W, kW… are converted).
   2. Runs a software thermostat per room (demand ON/OFF with hysteresis).
-  3. Grants or revokes heating permission per room so the total consumption
+  3. Grants or revokes heating permission per radiator so the total consumption
      stays within the contracted power limit.
-  4. Preempts lower-priority (or much warmer same-priority) rooms when a more
-     important room needs heat and there is not enough power.
+  4. Gives primary radiators priority over support radiators, and verifies
+     shutdown and fresh meter data before handing power to a waiting room.
   5. Sheds load when the measured consumption exceeds the limit.
   6. Drives the real heaters (climate or switch entities) and periodically
      reconciles their actual state with the desired one.
@@ -28,8 +28,9 @@ from __future__ import annotations
 import asyncio
 import copy
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
+from math import isfinite
 import time
 from typing import Any
 
@@ -37,14 +38,13 @@ import voluptuous as vol
 
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
+    ATTR_HVAC_ACTION,
     ATTR_MAX_TEMP,
-    ClimateEntityFeature,
     HVACMode,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_ENTITY_ID,
-    ATTR_SUPPORTED_FEATURES,
     ATTR_TEMPERATURE,
     ATTR_UNIT_OF_MEASUREMENT,
     STATE_OFF,
@@ -52,35 +52,33 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
     UnitOfPower,
+    UnitOfTemperature,
 )
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util.unit_conversion import PowerConverter
+from homeassistant.util.unit_conversion import PowerConverter, TemperatureConverter
 
 from .const import (
     CONF_COLD_TOLERANCE,
     CONF_ENABLED,
-    CONF_FORCE_MAX_TEMP,
     CONF_HEATER_ENTITY,
-    CONF_HEATER_TYPE,
     CONF_HOT_TOLERANCE,
-    CONF_HVAC_MODE_HEAT,
     CONF_MAX_POWER,
     CONF_POWER_SENSOR,
     CONF_POWER_W,
     CONF_PRIORITY,
+    CONF_RADIATORS,
     CONF_ROOM_ID,
+    CONF_ROOM_IDS,
     CONF_ROOM_NAME,
     CONF_ROOMS,
     CONF_TARGET_TEMP,
     CONF_TEMP_SENSOR,
     COORDINATOR_UPDATE_INTERVAL,
     DEFAULT_COLD_TOLERANCE,
-    DEFAULT_FORCE_MAX_TEMP,
     DEFAULT_HOT_TOLERANCE,
-    DEFAULT_HVAC_MODE_HEAT,
     DEFAULT_MAX_POWER,
     DEFAULT_POWER_W,
     DEFAULT_PRIORITY,
@@ -89,6 +87,7 @@ from .const import (
     FALLBACK_HEATER_MAX_TEMP,
     HEATER_SHUTDOWN_TIMEOUT,
     HEATER_TYPE_CLIMATE,
+    MAX_PRIORITY,
     MIN_ON_TIME_SECONDS,
     OVERPOWER_GRACE_SECONDS,
     PENDING_POWER_SECONDS,
@@ -106,8 +105,11 @@ from .const import (
     WAIT_OVERPOWER,
     WAIT_POWER,
     WAIT_POWER_SENSOR,
+    WAIT_RADIATOR,
+    WAIT_SHUTDOWN,
     WAIT_TEMPERATURE_SENSOR,
 )
+from .radiator import Radiator, RadiatorState, collect_radiators
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -120,14 +122,11 @@ class RoomConfig:
 
     room_id: str
     room_name: str
-    heater_type: str
     heater_entity: str
     temp_sensor: str
     target_temp: float = DEFAULT_TARGET_TEMP
     power_w: int = DEFAULT_POWER_W
     priority: int = DEFAULT_PRIORITY
-    hvac_mode_heat: str = DEFAULT_HVAC_MODE_HEAT
-    force_max_temp: bool = DEFAULT_FORCE_MAX_TEMP
     enabled: bool = True
 
     @classmethod
@@ -136,14 +135,11 @@ class RoomConfig:
         return cls(
             room_id=data[CONF_ROOM_ID],
             room_name=data[CONF_ROOM_NAME],
-            heater_type=data[CONF_HEATER_TYPE],
             heater_entity=data[CONF_HEATER_ENTITY],
             temp_sensor=data[CONF_TEMP_SENSOR],
             target_temp=float(data.get(CONF_TARGET_TEMP, DEFAULT_TARGET_TEMP)),
             power_w=int(data.get(CONF_POWER_W, DEFAULT_POWER_W)),
             priority=int(data.get(CONF_PRIORITY, DEFAULT_PRIORITY)),
-            hvac_mode_heat=data.get(CONF_HVAC_MODE_HEAT) or DEFAULT_HVAC_MODE_HEAT,
-            force_max_temp=bool(data.get(CONF_FORCE_MAX_TEMP, DEFAULT_FORCE_MAX_TEMP)),
             enabled=bool(data.get(CONF_ENABLED, True)),
         )
 
@@ -153,12 +149,18 @@ class RoomState:
     """Dynamic runtime state for one room (internal, not persisted)."""
 
     demand: bool = False
-    permission: bool = False
     deficit: float = 0.0
     current_temp: float | None = None
-    granted_at: float | None = None
     temp_unavailable_since: float | None = None
-    last_command_at: float | None = None
+
+
+@dataclass(frozen=True)
+class PowerTransfer:
+    """A handover that requires both a stopped radiator and a new meter reading."""
+
+    previous: str
+    requested: str
+    last_power_report: datetime | None
 
 
 class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -193,6 +195,11 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.room_states: dict[str, RoomState] = {
             room_id: RoomState() for room_id in self.room_configs
         }
+        self.radiators = collect_radiators(options)
+        self.radiator_states = {entity_id: RadiatorState() for entity_id in self.radiators}
+        self._index_radiators()
+        self._transfer: PowerTransfer | None = None
+        self._unloading = False
 
         self._lock = asyncio.Lock()
         self._overpower_task: asyncio.Task | None = None
@@ -208,6 +215,7 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Register state listeners (non-blocking)."""
         entities = {self.power_sensor}
         entities.update(cfg.temp_sensor for cfg in self.room_configs.values())
+        entities.update(self.radiators)
         self._unsub_listeners.append(
             async_track_state_change_event(
                 self.hass, sorted(entities), self._async_on_state_change
@@ -216,6 +224,7 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_unload(self) -> None:
         """Remove listeners and cancel pending tasks."""
+        self._unloading = True
         for unsub in self._unsub_listeners:
             unsub()
         self._unsub_listeners.clear()
@@ -247,11 +256,9 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if unit and unit != UnitOfPower.WATT:
             try:
                 value = PowerConverter.convert(value, unit, UnitOfPower.WATT)
-            except (HomeAssistantError, KeyError, ValueError):
-                _LOGGER.debug(
-                    "Unknown power unit %r on %s, assuming W", unit, self.power_sensor
-                )
-        return value
+            except (HomeAssistantError, KeyError, TypeError, ValueError):
+                return None
+        return value if isfinite(value) else None
 
     def get_available_power(self) -> float | None:
         """Return the power that can still be granted (None if unknown).
@@ -272,11 +279,26 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return None
         if not cfg.enabled:
             return STATUS_DISABLED
-        if state.permission:
+        if self.room_has_permission(room_id):
             return STATUS_HEATING
         if state.demand:
             return STATUS_WAITING
         return STATUS_IDLE
+
+    def room_has_permission(self, room_id: str) -> bool:
+        room = self.room_configs.get(room_id)
+        if room is None or not room.enabled or not self.room_states[room_id].demand:
+            return False
+        return any(
+            self.radiator_states[entity_id].permission
+            for entity_id in self.room_radiators.get(room_id, ())
+        )
+
+    def _index_radiators(self) -> None:
+        self.room_radiators: dict[str, list[str]] = {}
+        for entity_id, radiator in self.radiators.items():
+            for room_id in radiator.room_ids:
+                self.room_radiators.setdefault(room_id, []).append(entity_id)
 
     def _room_waiting_reason(
         self, room_id: str, available: float | None, power_block: str | None
@@ -284,15 +306,23 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Describe what is preventing this room from heating."""
         cfg = self.room_configs[room_id]
         state = self.room_states[room_id]
-        if not cfg.enabled or state.permission:
+        if not cfg.enabled:
             return WAIT_NONE
         if state.current_temp is None:
             return WAIT_TEMPERATURE_SENSOR
         if not state.demand:
             return WAIT_NONE
+        if self._transfer is not None and self._transfer.requested == cfg.heater_entity:
+            return WAIT_SHUTDOWN
+        primary = self.radiator_states.get(cfg.heater_entity)
+        if primary is not None and primary.permission:
+            return WAIT_NONE
 
         if power_block is not None:
             return power_block
+        radiator = self.radiators.get(cfg.heater_entity)
+        if radiator is not None and self._heater_is_on(radiator) is None:
+            return WAIT_RADIATOR
         if available is not None and available < cfg.power_w:
             return WAIT_POWER
         return WAIT_ALLOCATION
@@ -312,76 +342,115 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self.async_refresh()
 
     async def async_remove_room(self, room_id: str) -> None:
-        """Remove a room only after its heater is confirmed off."""
-        await self._async_retire_room_heater(room_id, None)
+        """Remove a room and retire the radiators that would lose their last link."""
+        await self._async_edit_room(room_id, None)
 
     async def async_replace_room_heater(
         self, room_id: str, old_heater: str, changes: dict[str, Any]
     ) -> None:
-        """Save a replacement only after the previous heater is confirmed off."""
-        await self._async_retire_room_heater(room_id, changes, old_heater)
+        """Save a replacement only after the previous radiator is safe to release."""
+        await self._async_edit_room(room_id, changes, old_heater)
 
-    async def _async_retire_room_heater(
-        self,
-        room_id: str,
-        changes: dict[str, Any] | None,
-        old_heater: str | None = None,
+    async def _async_edit_room(
+        self, room_id: str, changes: dict[str, Any] | None, old_heater: str | None = None
     ) -> None:
         async with self._lock:
-            cfg = self.room_configs.get(room_id)
-            if cfg is None:
-                raise ServiceValidationError(
-                    translation_domain=DOMAIN,
-                    translation_key="room_not_found",
-                    translation_placeholders={"room_id": room_id},
-                )
-            if old_heater is not None and cfg.heater_entity != old_heater:
-                raise ServiceValidationError(translation_domain=DOMAIN, translation_key="room_changed")
+            options = self.config_entry.options
+            rooms = options.get(CONF_ROOMS, [])
+            room = next((room for room in rooms if room[CONF_ROOM_ID] == room_id), None)
+            if room is None or room_id not in self.room_configs:
+                raise self._room_error("room_not_found", room_id)
+            if old_heater is not None and room[CONF_HEATER_ENTITY] != old_heater:
+                raise self._room_error("room_changed", room_id)
+            if changes and changes[CONF_HEATER_ENTITY] in self.radiators:
+                raise self._room_error("heater_already_configured", room_id)
+
+            new_rooms = [record for record in rooms if record[CONF_ROOM_ID] != room_id]
+            if changes is not None:
+                new_rooms = [
+                    {**room, **changes} if record is room else record for record in rooms
+                ]
+
+            new_options = {**options, CONF_ROOMS: new_rooms}
+            if changes is None:
+                new_options[CONF_RADIATORS] = [
+                    {**radiator, CONF_ROOM_IDS: [link for link in radiator[CONF_ROOM_IDS] if link != room_id]}
+                    for radiator in options.get(CONF_RADIATORS, [])
+                    if any(link != room_id for link in radiator[CONF_ROOM_IDS])
+                ]
+            await self._async_save_radiator_changes(new_options)
+            # Keep a replaced room and its entity IDs until the reload.
+            if changes is None:
+                del self.room_configs[room_id]
+                del self.room_states[room_id]
+
+    async def async_save_support(
+        self, previous_entity: str | None, support: dict[str, Any] | None
+    ) -> None:
+        """Attach a support radiator, change its links or safely remove it."""
+        async with self._lock:
+            options = self.config_entry.options
+            supports = list(options.get(CONF_RADIATORS, []))
+            existing = next(
+                (record for record in supports if record[CONF_HEATER_ENTITY] == previous_entity),
+                None,
+            )
+            if previous_entity is not None and existing is None:
+                raise self._room_error("room_changed")
+            if support is not None:
+                entity_id = support[CONF_HEATER_ENTITY]
+                if entity_id != previous_entity and entity_id in self.radiators:
+                    raise self._room_error("heater_already_configured")
+                if not set(support[CONF_ROOM_IDS]).issubset(self.room_configs):
+                    raise self._room_error("room_changed")
+            if existing is None:
+                if support is not None:
+                    supports.append(support)
+            elif support is None:
+                supports.remove(existing)
+            else:
+                supports[supports.index(existing)] = support
+            await self._async_save_radiator_changes({**options, CONF_RADIATORS: supports})
+
+    async def _async_save_radiator_changes(self, options: dict[str, Any]) -> None:
+        """Retire only devices absent from the new configuration."""
+        previous_options = self.config_entry.options
+        remaining = collect_radiators(options)
+        retired = self.radiators.keys() - remaining.keys()
+        for entity_id in sorted(retired):
             try:
-                await self._async_confirm_heater_off(cfg)
+                await self._async_confirm_heater_off(self.radiators[entity_id])
             except (HomeAssistantError, vol.Invalid, TimeoutError) as err:
-                _LOGGER.warning(
-                    "Could not confirm shutdown of %s: %s",
-                    cfg.heater_entity, str(err) or type(err).__name__,
-                )
+                _LOGGER.warning("Could not confirm shutdown of %s: %s", entity_id, str(err) or type(err).__name__)
                 raise ServiceValidationError(
                     translation_domain=DOMAIN,
                     translation_key="heater_shutdown_failed",
-                    translation_placeholders={"entity_id": cfg.heater_entity},
+                    translation_placeholders={"entity_id": entity_id},
                 ) from err
+        if self.config_entry.options != previous_options or self._unloading:
+            raise self._room_error("room_changed")
+        # Refresh will rebuild subscriptions and add newly configured devices.
+        self.hass.config_entries.async_update_entry(self.config_entry, options=options)
+        self.radiators = {key: remaining[key] for key in self.radiators if key in remaining}
+        for entity_id in retired:
+            del self.radiator_states[entity_id]
+        self._index_radiators()
 
-            options = dict(self.config_entry.options)
-            rooms = list(options.get(CONF_ROOMS, []))
-            for index, room in enumerate(rooms):
-                if room[CONF_ROOM_ID] == room_id:
-                    # Options may have changed while waiting for the device.
-                    if room[CONF_HEATER_ENTITY] != cfg.heater_entity:
-                        raise ServiceValidationError(
-                            translation_domain=DOMAIN, translation_key="room_changed"
-                        )
-                    if changes is None:
-                        rooms.pop(index)
-                    else:
-                        rooms[index] = {**room, **changes}
-                    break
-            else:
-                raise ServiceValidationError(
-                    translation_domain=DOMAIN,
-                    translation_key="room_not_found",
-                    translation_placeholders={"room_id": room_id},
-                )
-            options[CONF_ROOMS] = rooms
-            self.hass.config_entries.async_update_entry(self.config_entry, options=options)
-            del self.room_configs[room_id]
-            del self.room_states[room_id]
+    @staticmethod
+    def _room_error(key: str, room_id: str = "") -> ServiceValidationError:
+        return ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key=key,
+            translation_placeholders={"room_id": room_id} if key == "room_not_found" else None,
+        )
 
-    async def _async_confirm_heater_off(self, cfg: RoomConfig) -> None:
+    async def _async_confirm_heater_off(self, cfg: Radiator) -> None:
         """Wait for the switch or climate entity to report that it is off."""
         state = self.hass.states.get(cfg.heater_entity)
         if (
             state is not None
             and state.state == STATE_OFF
-            and not self.room_states[cfg.room_id].permission
+            and not self.radiator_states[cfg.heater_entity].permission
         ):
             return
 
@@ -432,14 +501,18 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @callback
     def _async_on_state_change(self, event: Event[EventStateChangedData]) -> None:
-        if event.data["new_state"] is None:
-            return
-
-        if event.data["entity_id"] == self.power_sensor:
+        entity_id = event.data["entity_id"]
+        if entity_id == self.power_sensor:
             self._async_check_overpower()
-            if self._async_power_freed_for_waiting_room():
+            if self._transfer is not None or self._async_power_freed_for_waiting_room():
                 self._async_schedule_refresh()
             # Keep the power sensors live without resetting the refresh timer.
+            self._async_publish()
+            return
+
+        if entity_id in self.radiators:
+            if self._transfer is not None and entity_id == self._transfer.previous:
+                self._async_schedule_refresh()
             self._async_publish()
             return
 
@@ -454,15 +527,14 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @callback
     def _async_power_freed_for_waiting_room(self) -> bool:
-        waiting = [
-            self.room_configs[room_id].power_w
-            for room_id, state in self.room_states.items()
-            if state.demand and not state.permission and self.room_configs[room_id].enabled
-        ]
+        waiting = self._waiting_radiators()
         if not waiting or self._in_power_ok_grace(time.monotonic()):
             return False
         available = self.get_available_power()
-        return available is not None and available >= min(waiting)
+        principals = [radiator for radiator in waiting if radiator.primary]
+        return available is not None and available >= min(
+            radiator.power_w for radiator in (principals or waiting)
+        )
 
     # ── Overpower handling ────────────────────────────────────────────────
 
@@ -493,59 +565,49 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._async_publish()
 
     async def _async_shed_load(self) -> None:
-        """Revoke permissions until the measured excess is covered."""
+        """Switch off supports first and only credit a reported shutdown."""
         current = self.get_current_power()
-        if current is None:
+        if current is None or current <= self.max_power:
             return
         excess = current - self.max_power
-        if excess <= 0:
-            return
-
-        victims = self._shed_order()
-        if not victims:
-            _LOGGER.warning(
-                "Over power budget by %.0fW but no heater is running — "
-                "the excess comes from other loads",
-                excess,
-            )
-            return
-
-        _LOGGER.warning("Over power budget by %.0fW — shedding load", excess)
-        freed = 0
-        for room_id in victims:
-            await self._async_set_permission(room_id, False, "overpower")
-            freed += self.room_configs[room_id].power_w
-            if freed >= excess:
-                break
-        self._last_shed_at = time.monotonic()
-
-    def _shed_order(self) -> list[str]:
-        """Rooms with permission, least important first.
-
-        Highest priority number first, then smallest thermal deficit.
-        """
-        candidates = [
-            room_id for room_id, state in self.room_states.items() if state.permission
-        ]
-        candidates.sort(
-            key=lambda r: (-self.room_configs[r].priority, self.room_states[r].deficit)
+        victims = sorted(
+            (
+                entity_id for entity_id, radiator in self.radiators.items()
+                if self.radiator_states[entity_id].permission or self._heater_is_on(radiator)
+            ),
+            key=self._shed_order,
         )
-        return candidates
+        if not victims:
+            _LOGGER.warning("Over power budget by %.0f W with no managed radiator running", excess)
+            return
+
+        self._last_shed_at = time.monotonic()
+        for entity_id in victims:
+            radiator = self.radiators[entity_id]
+            state = self.radiator_states[entity_id]
+            try:
+                await self._async_confirm_heater_off(radiator)
+            except (HomeAssistantError, vol.Invalid, TimeoutError):
+                _LOGGER.warning("Radiator %s did not confirm shutdown during load shedding", entity_id)
+            else:
+                excess -= radiator.power_w
+                state.granted_at = None
+            finally:
+                state.permission = False
+                state.last_command_at = time.monotonic()
+            if excess <= 0:
+                break
 
     # ── Control cycle ─────────────────────────────────────────────────────
 
     async def _async_control_cycle(self) -> None:
         now = time.monotonic()
-
-        for room_id in list(self.room_configs):
+        for room_id in self.room_configs:
             self._update_demand(room_id, now)
 
-        # Revoke rooms that no longer need (or are no longer allowed) heat.
-        for room_id, state in list(self.room_states.items()):
-            cfg = self.room_configs[room_id]
-            if state.permission and (not cfg.enabled or not state.demand):
-                reason = "disabled" if not cfg.enabled else "target reached"
-                await self._async_set_permission(room_id, False, reason)
+        for entity_id, radiator in self.radiators.items():
+            if self.radiator_states[entity_id].permission and not self._demanders(radiator):
+                await self._async_set_permission(entity_id, False, "no linked room requests heat")
 
         self._async_check_overpower()
         await self._async_grant_permissions(now)
@@ -594,24 +656,68 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._last_shed_at is not None and now - self._last_shed_at < POWER_OK_GRACE_SECONDS
 
     def _pending_power(self, now: float) -> float:
+        transferring = self._transfer.previous if self._transfer is not None else None
         return sum(
-            self.room_configs[room_id].power_w
-            for room_id, state in self.room_states.items()
-            if state.permission
-            and state.granted_at is not None
+            self.radiators[entity_id].power_w
+            for entity_id, state in self.radiator_states.items()
+            if state.granted_at is not None
             and now - state.granted_at < PENDING_POWER_SECONDS
+            and (
+                state.permission
+                or entity_id == transferring
+                or self._heater_is_on(self.radiators[entity_id]) is not False
+            )
         )
 
+    def _demanders(self, radiator: Radiator, *, fresh: bool = False) -> list[str]:
+        return [
+            room_id for room_id in radiator.room_ids
+            if (state := self.room_states.get(room_id)) is not None
+            and self.room_configs[room_id].enabled
+            and state.demand
+            and (not fresh or state.current_temp is not None)
+        ]
+
+    def _priority(self, radiator: Radiator) -> tuple[int, float]:
+        return min(
+            ((self.room_configs[room_id].priority, -self.room_states[room_id].deficit)
+             for room_id in self._demanders(radiator)),
+            default=(MAX_PRIORITY + 1, 0.0),
+        )
+
+    def _shed_order(self, entity_id: str) -> tuple[bool, int, float, int]:
+        radiator = self.radiators[entity_id]
+        priority, deficit = self._priority(radiator)
+        return radiator.primary, -priority, -deficit, -radiator.order
+
+    def _waiting_radiators(self) -> list[Radiator]:
+        return [
+            radiator for entity_id, radiator in self.radiators.items()
+            if not self.radiator_states[entity_id].permission and self._demanders(radiator, fresh=True)
+        ]
+
+    def _update_transfer(self, waiting: set[str]) -> None:
+        transfer = self._transfer
+        if transfer is None:
+            return
+        previous = self.hass.states.get(transfer.previous)
+        power = self.hass.states.get(self.power_sensor)
+        if (
+            transfer.requested not in waiting
+            or transfer.previous not in self.radiators
+            or (
+                previous is not None and previous.state == STATE_OFF
+                and power is not None and power.last_reported >= previous.last_changed
+                and (transfer.last_power_report is None or power.last_reported > transfer.last_power_report)
+            )
+        ):
+            self._transfer = None
+
     async def _async_grant_permissions(self, now: float) -> None:
-        """Grant permissions by priority, preempting less important rooms if needed."""
         current = self.get_current_power()
         if current is None:
             if not self._power_unavailable_logged:
-                _LOGGER.warning(
-                    "Power sensor %s is unavailable — no new heating permissions "
-                    "will be granted until it reports again",
-                    self.power_sensor,
-                )
+                _LOGGER.warning("Power sensor %s is unavailable or invalid; heating starts are paused", self.power_sensor)
                 self._power_unavailable_logged = True
             return
         self._power_unavailable_logged = False
@@ -619,71 +725,60 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if current > self.max_power or self._shedding or self._in_power_ok_grace(now):
             return
 
+        waiting = self._waiting_radiators()
+        self._update_transfer({radiator.heater_entity for radiator in waiting})
         available = self.max_power - current - self._pending_power(now)
-        waiting = [
-            room_id
-            for room_id, state in self.room_states.items()
-            if state.demand and not state.permission and self.room_configs[room_id].enabled
-        ]
-        waiting.sort(
-            key=lambda r: (self.room_configs[r].priority, -self.room_states[r].deficit)
-        )
-
-        for room_id in waiting:
-            needed = self.room_configs[room_id].power_w
-            if available >= needed:
-                await self._async_set_permission(room_id, True, "power available")
-                available -= needed
-                continue
-
-            victims = self._select_preemption_victims(room_id, needed - available, now)
-            if not victims:
-                continue
-            for victim_id in victims:
-                await self._async_set_permission(victim_id, False, f"preempted by {room_id}")
-                available += self.room_configs[victim_id].power_w
-            await self._async_set_permission(room_id, True, "preemption")
-            available -= needed
-
-    def _select_preemption_victims(
-        self, room_id: str, shortfall: float, now: float
-    ) -> list[str] | None:
-        """Return the rooms to switch off so ``room_id`` can heat, or None.
-
-        A heating room can be preempted when it is less important (higher
-        priority number), or has the same priority but is at least
-        ``PREEMPT_DEFICIT_MARGIN`` °C warmer relative to its setpoint. Rooms that
-        started heating less than ``MIN_ON_TIME_SECONDS`` ago are protected.
-        """
-        cfg = self.room_configs[room_id]
-        state = self.room_states[room_id]
-        candidates: list[str] = []
-        for victim_id, victim_state in self.room_states.items():
-            if victim_id == room_id or not victim_state.permission:
-                continue
+        waiting.sort(key=lambda radiator: (not radiator.primary, self._priority(radiator), radiator.order))
+        unmet_primary = False
+        for radiator in waiting:
+            entity_id = radiator.heater_entity
+            transfer = self._transfer
+            if not radiator.primary and (unmet_primary or transfer is not None):
+                break
             if (
-                victim_state.granted_at is not None
-                and now - victim_state.granted_at < MIN_ON_TIME_SECONDS
+                self._heater_is_on(radiator) is not None
+                and available >= radiator.power_w
+                and (transfer is None or entity_id not in (transfer.requested, transfer.previous))
             ):
+                await self._async_set_permission(entity_id, True, "power available")
+                available -= radiator.power_w
                 continue
-            victim_cfg = self.room_configs[victim_id]
-            if victim_cfg.priority > cfg.priority or (
-                victim_cfg.priority == cfg.priority
-                and state.deficit - victim_state.deficit >= PREEMPT_DEFICIT_MARGIN
-            ):
-                candidates.append(victim_id)
+            if not radiator.primary:
+                continue
+            unmet_primary = True
+            if transfer is None and self._heater_is_on(radiator) is not None:
+                victim = self._preemption_victim(radiator, radiator.power_w - available, now)
+                if victim is not None:
+                    power_sample = self.hass.states.get(self.power_sensor)
+                    self._transfer = PowerTransfer(
+                        victim, entity_id, power_sample.last_reported if power_sample else None
+                    )
+                    await self._async_set_permission(victim, False, f"power requested by {entity_id}")
 
-        candidates.sort(
-            key=lambda r: (-self.room_configs[r].priority, self.room_states[r].deficit)
-        )
-        chosen: list[str] = []
-        freed = 0
-        for victim_id in candidates:
-            chosen.append(victim_id)
-            freed += self.room_configs[victim_id].power_w
-            if freed >= shortfall:
-                return chosen
-        return None
+    def _preemption_victim(self, requested: Radiator, shortfall: float, now: float) -> str | None:
+        """Choose the first radiator to stop if eligible loads can cover the shortfall."""
+        if shortfall <= 0:
+            return None
+        priority, deficit = self._priority(requested)
+        candidates = []
+        for entity_id, radiator in self.radiators.items():
+            state = self.radiator_states[entity_id]
+            if not state.permission or self._heater_is_on(radiator) is not True:
+                continue
+            if radiator.primary:
+                if set(requested.room_ids).intersection(radiator.room_ids):
+                    continue
+                if state.granted_at is not None and now - state.granted_at < MIN_ON_TIME_SECONDS:
+                    continue
+                other_priority, other_deficit = self._priority(radiator)
+                if other_priority <= priority and (
+                    other_priority < priority or other_deficit - deficit < PREEMPT_DEFICIT_MARGIN
+                ):
+                    continue
+            candidates.append(entity_id)
+        if sum(self.radiators[entity_id].power_w for entity_id in candidates) < shortfall:
+            return None
+        return min(candidates, key=self._shed_order)
 
     async def _async_reconcile(self, now: float) -> None:
         """Make the real heaters match the desired state.
@@ -691,8 +786,8 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Covers restarts/reloads (heaters left ON with no permission), failed
         commands and manual changes made outside of the controller.
         """
-        for room_id, cfg in list(self.room_configs.items()):
-            state = self.room_states[room_id]
+        for entity_id, cfg in self.radiators.items():
+            state = self.radiator_states[entity_id]
             actual = self._heater_is_on(cfg)
             if actual is None or actual == state.permission:
                 continue
@@ -702,28 +797,25 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ):
                 continue
             _LOGGER.info(
-                "Room %s: heater %s is %s but should be %s — correcting",
-                room_id, cfg.heater_entity,
+                "Radiator %s is %s but should be %s — correcting",
+                entity_id,
                 "on" if actual else "off", "on" if state.permission else "off",
             )
-            await self._async_apply_heater(room_id, state.permission)
+            await self._async_apply_heater(entity_id, state.permission)
 
     # ── Actuators ─────────────────────────────────────────────────────────
 
-    async def _async_set_permission(self, room_id: str, active: bool, reason: str) -> None:
-        state = self.room_states[room_id]
+    async def _async_set_permission(self, entity_id: str, active: bool, reason: str) -> None:
+        state = self.radiator_states[entity_id]
         state.permission = active
-        state.granted_at = time.monotonic() if active else None
-        _LOGGER.info(
-            "Room %s: permission %s (%s)", room_id, "granted" if active else "revoked", reason
-        )
-        await self._async_apply_heater(room_id, active)
+        if active:
+            state.granted_at = time.monotonic()
+        _LOGGER.info("Radiator %s: permission %s (%s)", entity_id, "granted" if active else "revoked", reason)
+        await self._async_apply_heater(entity_id, active)
 
-    async def _async_apply_heater(self, room_id: str, active: bool) -> None:
-        cfg = self.room_configs.get(room_id)
-        if cfg is None:
-            return
-        self.room_states[room_id].last_command_at = time.monotonic()
+    async def _async_apply_heater(self, entity_id: str, active: bool) -> None:
+        cfg = self.radiators[entity_id]
+        self.radiator_states[entity_id].last_command_at = time.monotonic()
         try:
             if not active:
                 await self._async_turn_heater_off(cfg)
@@ -738,11 +830,11 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
         except (HomeAssistantError, vol.Invalid) as err:
             _LOGGER.error(
-                "Room %s: could not turn %s heater %s: %s",
-                room_id, "on" if active else "off", cfg.heater_entity, err,
+                "Could not turn %s radiator %s: %s",
+                "on" if active else "off", entity_id, err,
             )
 
-    async def _async_turn_heater_off(self, cfg: RoomConfig, *, blocking: bool = False) -> None:
+    async def _async_turn_heater_off(self, cfg: Radiator, *, blocking: bool = False) -> None:
         if cfg.heater_type == HEATER_TYPE_CLIMATE:
             await self.hass.services.async_call(
                 "climate",
@@ -758,7 +850,7 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 blocking=blocking,
             )
 
-    async def _async_turn_climate_on(self, cfg: RoomConfig) -> None:
+    async def _async_turn_climate_on(self, cfg: Radiator) -> None:
         # 1. Turn on the heater in the configured HVAC mode (e.g. "heat")
         await self.hass.services.async_call(
             "climate",
@@ -784,20 +876,21 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
             except (HomeAssistantError, vol.Invalid) as err:
                 _LOGGER.debug(
-                    "Room %s: could not set max temperature on %s: %s",
-                    cfg.room_id,
+                    "Could not set max temperature on %s: %s",
                     cfg.heater_entity,
                     err,
                 )
 
 
-    def _heater_is_on(self, cfg: RoomConfig) -> bool | None:
+    def _heater_is_on(self, cfg: Radiator) -> bool | None:
         state = self.hass.states.get(cfg.heater_entity)
         if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
             return None
         if cfg.heater_type == HEATER_TYPE_CLIMATE:
             return state.state != HVACMode.OFF
-        return state.state == STATE_ON
+        if state.state == STATE_ON:
+            return True
+        return False if state.state == STATE_OFF else None
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -806,9 +899,35 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if state is None or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
             return None
         try:
-            return float(state.state)
-        except (TypeError, ValueError):
+            value = float(state.state)
+            unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT) or UnitOfTemperature.CELSIUS
+            value = TemperatureConverter.convert(value, unit, UnitOfTemperature.CELSIUS)
+        except (HomeAssistantError, KeyError, TypeError, ValueError):
             return None
+        return value if isfinite(value) else None
+
+    def _radiator_snapshot(self, entity_id: str, now: float) -> dict[str, Any]:
+        radiator = self.radiators[entity_id]
+        command = self.radiator_states[entity_id]
+        reported = self.hass.states.get(entity_id)
+        actual = self._heater_is_on(radiator)
+        return {
+            "entity_id": entity_id,
+            "role": "primary" if radiator.primary else (
+                "shared" if len(radiator.room_ids) > 1 else "support"
+            ),
+            "room_ids": list(radiator.room_ids),
+            "power_w": radiator.power_w,
+            "permission": command.permission,
+            "reported_state": reported.state if reported else STATE_UNAVAILABLE,
+            "hvac_action": reported.attributes.get(ATTR_HVAC_ACTION) if reported else None,
+            "needs_attention": (
+                actual is None or (
+                    actual != command.permission
+                    and (command.last_command_at is None or now - command.last_command_at >= HEATER_SHUTDOWN_TIMEOUT)
+                )
+            ),
+        }
 
     @callback
     def _async_publish(self) -> None:
@@ -831,6 +950,9 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         elif self._in_power_ok_grace(now):
             power_block = WAIT_COOLDOWN
 
+        radiators = {
+            entity_id: self._radiator_snapshot(entity_id, now) for entity_id in self.radiators
+        }
         return {
             "available_power": available,
             "max_power": self.max_power,
@@ -842,12 +964,15 @@ class PowerHeatingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "status": self.room_status(room_id),
                     "waiting_reason": self._room_waiting_reason(room_id, available, power_block),
                     "demand": self.room_states[room_id].demand,
-                    "permission": self.room_states[room_id].permission,
+                    "permission": self.room_has_permission(room_id),
                     "deficit": self.room_states[room_id].deficit,
                     "current_temp": self.room_states[room_id].current_temp,
                     "target_temp": cfg.target_temp,
                     "power_w": cfg.power_w,
                     "priority": cfg.priority,
+                    "radiators": [
+                        radiators[entity_id] for entity_id in self.room_radiators.get(room_id, ())
+                    ],
                 }
                 for room_id, cfg in self.room_configs.items()
             },

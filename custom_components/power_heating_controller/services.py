@@ -140,6 +140,10 @@ def async_register_services(hass: HomeAssistant) -> None:
                 translation_key="wrong_heater_domain",
                 translation_placeholders={"entity_id": heater_entity, "heater_type": heater_type},
             )
+        if heater_entity in entry.runtime_data.radiators:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="heater_already_configured"
+            )
 
         options = copy.deepcopy(dict(entry.options))
         options.setdefault(CONF_ROOMS, []).append(

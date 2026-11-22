@@ -57,6 +57,7 @@
     },
     "error": {
       "entity_not_found": "Entity not found.",
+      "heater_already_configured": "This radiator is already configured. Edit its linked rooms to share it.",
       "no_heating_modes": "This entity reports no heating modes. Check the device or select another one.",
       "invalid_heating_mode": "This mode is no longer available. Select another one.",
       "invalid_name": "Invalid room name.",
@@ -69,6 +70,38 @@
   },
   "options": {
     "step": {
+      "radiators": {
+        "title": "Support and shared radiators",
+        "data": {
+          "action": "Select an existing radiator or add one."
+        }
+      },
+      "radiator": {
+        "title": "Configure radiator",
+        "data": {
+          "heater_entity": "Radiator",
+          "room_ids": "Linked rooms",
+          "power_w": "Rated power (W)",
+          "radiator_order": "Start order",
+          "delete_radiator": "Remove this radiator"
+        },
+        "data_description": {
+          "room_ids": "Select one room for a dedicated radiator or several to share it.",
+          "radiator_order": "With equal room priority and temperature deficit, lower numbers start first and stop last."
+        }
+      },
+      "radiator_hvac": {
+        "title": "Radiator heating mode",
+        "data": {
+          "hvac_mode_heat": "HVAC mode used to heat",
+          "force_max_temp": "Use the radiator's maximum temperature while heating"
+        }
+      },
+      "confirm_remove_radiator": {
+        "title": "Remove {radiator}",
+        "description": "The controller confirms the radiator is off before removing it.",
+        "submit": "Remove radiator"
+      },
       "init": {
         "title": "Power Heating Controller — Options",
         "data": {
@@ -156,18 +189,29 @@
       "heater_shutdown_failed": "Could not confirm the heater is off. The room was kept.",
       "not_loaded": "Load Power Heating Controller before removing a room.",
       "replacement_not_loaded": "Load Power Heating Controller before replacing a heater.",
+      "heater_already_configured": "This radiator is already configured. Edit its linked rooms to share it.",
+      "select_rooms": "Select at least one existing room.",
+      "radiators_not_loaded": "Load Power Heating Controller before editing radiators.",
+      "room_changed": "The configuration changed. Open options again.",
       "heater_replacement_failed": "The previous heater did not confirm it was off. The original configuration was kept."
     },
     "abort": {
       "room_not_found": "The room no longer exists.",
-      "room_changed": "This room's heater changed. Reopen the configuration to continue."
+      "room_changed": "The configuration changed. Open options again.",
+      "no_rooms": "Add a room before configuring support radiators."
     }
   },
   "selector": {
     "room_action": {
       "options": {
         "__global__": "Power limit, sensor and tolerances",
-        "__add__": "Add room"
+        "__add__": "Add room",
+        "__radiators__": "Support and shared radiators"
+      }
+    },
+    "radiator_action": {
+      "options": {
+        "__add__": "Add radiator"
       }
     },
     "heating_mode": {
@@ -211,6 +255,8 @@
           "temperature_sensor_unavailable": "Room temperature sensor unavailable",
           "power_limit_exceeded": "Power limit exceeded",
           "cooldown": "Pause after shedding load",
+          "awaiting_shutdown": "Waiting for shutdown and available power",
+          "radiator_unavailable": "Primary radiator unavailable",
           "pending_allocation": "Waiting for power allocation"
         }
       }
@@ -222,8 +268,11 @@
     }
   },
   "exceptions": {
+    "heater_already_configured": {
+      "message": "This radiator is already configured. Edit its linked rooms to share it."
+    },
     "room_changed": {
-      "message": "This room's heater changed. Reopen the configuration to continue."
+      "message": "The configuration changed. Open options again."
     },
     "heater_shutdown_failed": {
       "message": "Could not confirm that {entity_id} is off. The room was kept."

@@ -3,13 +3,16 @@
 from homeassistant.const import Platform
 
 DOMAIN = "power_heating_controller"
-VERSION = "2.1.1"
+VERSION = "2.2.0"
 MANUFACTURER = "HAPHC"
 
 # ── Config entry keys (global) ─────────────────────────────────────────────
 CONF_POWER_SENSOR = "power_sensor"
 CONF_MAX_POWER = "max_power"
 CONF_ROOMS = "rooms"
+CONF_RADIATORS = "radiators"
+CONF_ROOM_IDS = "room_ids"
+CONF_RADIATOR_ORDER = "radiator_order"
 CONF_COLD_TOLERANCE = "cold_tolerance"
 CONF_HOT_TOLERANCE = "hot_tolerance"
 
@@ -45,6 +48,8 @@ WAIT_TEMPERATURE_SENSOR = "temperature_sensor_unavailable"
 WAIT_OVERPOWER = "power_limit_exceeded"
 WAIT_COOLDOWN = "cooldown"
 WAIT_ALLOCATION = "pending_allocation"
+WAIT_SHUTDOWN = "awaiting_shutdown"
+WAIT_RADIATOR = "radiator_unavailable"
 WAIT_REASONS = [
     WAIT_NONE,
     WAIT_POWER,
@@ -53,6 +58,8 @@ WAIT_REASONS = [
     WAIT_OVERPOWER,
     WAIT_COOLDOWN,
     WAIT_ALLOCATION,
+    WAIT_SHUTDOWN,
+    WAIT_RADIATOR,
 ]
 
 # ── Defaults ──────────────────────────────────────────────────────────────

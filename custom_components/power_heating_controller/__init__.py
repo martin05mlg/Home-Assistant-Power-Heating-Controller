@@ -26,9 +26,6 @@ from homeassistant.helpers import (
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
-    CONF_HEATER_ENTITY,
-    CONF_HEATER_TYPE,
-    CONF_ROOMS,
     DOMAIN,
     HEATER_TYPE_CLIMATE,
     MANUFACTURER,
@@ -37,6 +34,7 @@ from .const import (
 )
 from .coordinator import PowerHeatingConfigEntry, PowerHeatingCoordinator
 from .entity import room_device_identifier
+from .radiator import collect_radiators
 from .services import async_register_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -90,12 +88,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: PowerHeatingConfigEntry
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Turn every managed heater off when the integration is deleted."""
-    for room in (entry.options or entry.data).get(CONF_ROOMS, []):
-        heater = room.get(CONF_HEATER_ENTITY)
-        if not heater:
-            continue
+    for heater, radiator in collect_radiators(entry.options or entry.data).items():
         try:
-            if room.get(CONF_HEATER_TYPE) == HEATER_TYPE_CLIMATE:
+            if radiator.heater_type == HEATER_TYPE_CLIMATE:
                 await hass.services.async_call(
                     "climate", "set_hvac_mode",
                     {ATTR_ENTITY_ID: heater, ATTR_HVAC_MODE: HVACMode.OFF},

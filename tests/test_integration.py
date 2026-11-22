@@ -5,6 +5,7 @@ from collections import Counter
 from pathlib import Path
 from shutil import copytree
 import sys
+import time
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
@@ -24,6 +25,9 @@ HEATER = "switch.office_heater"
 REPLACEMENT = "switch.replacement"
 CLIMATE_HEATER = "climate.office_heater"
 CLIMATE_REPLACEMENT = "climate.replacement"
+HALL = "switch.hall_radiator"
+BEDROOM = "switch.bedroom_heater"
+BEDROOM_TEMP = "sensor.bedroom_temperature"
 
 
 class TestPowerHeatingController(IsolatedAsyncioTestCase):
@@ -121,6 +125,34 @@ class TestPowerHeatingController(IsolatedAsyncioTestCase):
         result = await options.async_configure(result["flow_id"], {"action": "office"})
         self.assertEqual(result["step_id"], "edit_room")
         return result["flow_id"]
+
+    async def _add_bedroom(self):
+        self.hass.states.async_set(BEDROOM, "off")
+        self.hass.states.async_set(BEDROOM_TEMP, "23", {"unit_of_measurement": "°C"})
+        await self.hass.services.async_call(DOMAIN, "add_room", {
+            "room_name": "Bedroom", "heater_type": "switch", "heater_entity": BEDROOM,
+            "temp_sensor": BEDROOM_TEMP, "power_w": 1000, "priority": 1,
+        }, blocking=True)
+        await self.hass.async_block_till_done()
+
+    async def _open_radiator_form(self, entry, selection="__add__"):
+        options = self.hass.config_entries.options
+        result = await options.async_init(entry.entry_id)
+        flow_id = result["flow_id"]
+        result = await options.async_configure(flow_id, {"action": "__radiators__"})
+        self.assertEqual(result["step_id"], "radiators")
+        result = await options.async_configure(flow_id, {"action": selection})
+        self.assertEqual(result["step_id"], "radiator")
+        return flow_id
+
+    async def _add_hall(self, entry, rooms):
+        self.hass.states.async_set(HALL, "off")
+        flow_id = await self._open_radiator_form(entry)
+        result = await self.hass.config_entries.options.async_configure(flow_id, {
+            "heater_entity": HALL, "room_ids": rooms, "power_w": 600, "radiator_order": 10,
+        })
+        self.assertEqual(result["type"], "create_entry", result)
+        await self.hass.async_block_till_done()
 
     @staticmethod
     def _edited_fields(heater):
@@ -266,6 +298,136 @@ class TestPowerHeatingController(IsolatedAsyncioTestCase):
         self._power(3000)
         await self.hass.async_block_till_done()
         self.assertEqual(self.hass.states.get(reason_id).state, "cooldown")
+
+    async def test_shared_radiator_is_counted_once_and_releases_power_safely(self):
+        self._power(2000)
+        entry = await self._setup_room()
+        await self._add_bedroom()
+        await self._add_hall(entry, ["office", "bedroom"])
+        coordinator = entry.runtime_data
+        self.assertEqual(self.hass.states.get(HALL).state, "on")
+        self.assertEqual(self.commands.count((HALL, "on")), 1)
+        self.assertEqual(coordinator._pending_power(time.monotonic()), 1600)
+        snapshot = coordinator.data["rooms"]
+        shared_office = next(r for r in snapshot["office"]["radiators"] if r["entity_id"] == HALL)
+        shared_bedroom = next(r for r in snapshot["bedroom"]["radiators"] if r["entity_id"] == HALL)
+        self.assertEqual(shared_office, shared_bedroom)
+        self.assertEqual(shared_office["role"], "shared")
+        self.assertFalse(coordinator.room_has_permission("bedroom"))
+        for radiator in coordinator.radiator_states.values():
+            if radiator.granted_at is not None:
+                radiator.granted_at -= 121
+
+        self.shutdown = "no_confirmation"
+        self._power(3600)
+        self.hass.states.async_set(BEDROOM_TEMP, "16")
+        await coordinator.async_refresh()
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.hass.states.get(HALL).state, "on")
+        self.assertEqual(self.hass.states.get(BEDROOM).state, "off")
+        self.assertEqual(coordinator.data["rooms"]["bedroom"]["waiting_reason"], "awaiting_shutdown")
+        self.assertEqual(self.hass.states.get(HEATER).state, "on")
+
+        # A meter update while the hall is still on is insufficient.
+        self._power(3000)
+        await coordinator.async_refresh()
+        self.assertEqual(self.hass.states.get(BEDROOM).state, "off")
+        self.hass.states.async_set(HALL, "off")
+        await coordinator.async_refresh()
+        self.assertEqual(self.hass.states.get(BEDROOM).state, "off")
+
+        self._power(3010)
+        await coordinator.async_refresh()
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.hass.states.get(BEDROOM).state, "on")
+        self.assertEqual(self.commands[-2:], [(HALL, "off"), (BEDROOM, "on")])
+        self.assertEqual(self.hass.states.get(HEATER).state, "on")
+
+    async def test_room_removal_keeps_shared_radiator_and_retires_dedicated_support(self):
+        self._power(1700)
+        entry = await self._setup_room()
+        await self._add_bedroom()
+        await self._add_hall(entry, ["office", "bedroom"])
+        dedicated = "switch.office_support"
+        self.hass.states.async_set(dedicated, "off")
+        flow_id = await self._open_radiator_form(entry)
+        result = await self.hass.config_entries.options.async_configure(flow_id, {
+            "heater_entity": dedicated, "room_ids": ["office"], "power_w": 450,
+            "radiator_order": 20,
+        })
+        self.assertEqual(result["type"], "create_entry", result)
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.hass.states.get(dedicated).state, "on")
+        self.assertEqual(self.hass.states.get(HALL).state, "on")
+        await self.hass.services.async_call(DOMAIN, "remove_room", {"room_id": "bedroom"}, blocking=True)
+        await self.hass.async_block_till_done()
+        self.assertEqual(entry.options["radiators"][0]["room_ids"], ["office"])
+        self.assertNotIn((HALL, "off"), self.commands)
+        await self.hass.services.async_call(DOMAIN, "remove_room", {"room_id": "office"}, blocking=True)
+        await self.hass.async_block_till_done()
+        self.assertEqual(entry.options["radiators"], [])
+        self.assertEqual(self.hass.states.get(dedicated).state, "off")
+        self.assertEqual(self.hass.states.get(HALL).state, "off")
+
+    async def test_climate_support_uses_mode_picker_and_rejects_duplicate_entity(self):
+        self._power(1500)
+        entry = await self._setup_room()
+        flow_id = await self._open_radiator_form(entry)
+        options = self.hass.config_entries.options
+        fields = {"room_ids": ["office"], "power_w": 600, "radiator_order": 10}
+        result = await options.async_configure(flow_id, {**fields, "heater_entity": HEATER})
+        self.assertEqual(result["errors"]["heater_entity"], "heater_already_configured")
+        result = await options.async_configure(flow_id, {**fields, "heater_entity": CLIMATE_HEATER})
+        self.assertEqual(result["step_id"], "radiator_hvac")
+        result = await options.async_configure(flow_id, {"hvac_mode_heat": "auto", "force_max_temp": False})
+        self.assertEqual(result["type"], "create_entry")
+        await self.hass.async_block_till_done()
+        self.assertEqual(self.hass.states.get(CLIMATE_HEATER).state, "auto")
+
+        flow_id = await self._open_radiator_form(entry, CLIMATE_HEATER)
+        result = await options.async_configure(flow_id, {
+            **fields, "heater_entity": CLIMATE_HEATER, "delete_radiator": True,
+        })
+        self.assertEqual(result["step_id"], "confirm_remove_radiator")
+        self.shutdown = "error"
+        result = await options.async_configure(flow_id, {})
+        self.assertEqual(result["errors"]["base"], "heater_shutdown_failed")
+        self.assertEqual(self.hass.states.get(CLIMATE_HEATER).state, "auto")
+        self.assertEqual(len(entry.options["radiators"]), 1)
+        self.shutdown = "delayed"
+        result = await options.async_configure(flow_id, {})
+        self.assertEqual(result["type"], "create_entry")
+        self.assertEqual(self.hass.states.get(CLIMATE_HEATER).state, "off")
+        self.assertEqual(entry.options["radiators"], [])
+
+    async def test_primary_preemption_also_waits_for_confirmed_shutdown(self):
+        entry = await self._setup_room()
+        await self._add_bedroom()
+        coordinator = entry.runtime_data
+        coordinator.radiator_states[HEATER].granted_at -= 121
+        self.shutdown = "no_confirmation"
+        self._power(3900)
+        self.hass.states.async_set(BEDROOM_TEMP, "16")
+        await coordinator.async_refresh()
+        await self.hass.async_block_till_done()
+        self.assertIn((HEATER, "off"), self.commands)
+        self.assertEqual(self.hass.states.get(HEATER).state, "on")
+        self.assertEqual(self.hass.states.get(BEDROOM).state, "off")
+
+    async def test_sensor_readings_validate_units_and_finite_values(self):
+        self.hass.states.async_set(POWER, "0.5", {"unit_of_measurement": "kW"})
+        self.hass.states.async_set(TEMPERATURE, "68", {"unit_of_measurement": "°F"})
+        entry = await self._setup_room()
+        coordinator = entry.runtime_data
+        self.assertEqual(coordinator.get_current_power(), 500)
+        self.assertAlmostEqual(coordinator.data["rooms"]["office"]["current_temp"], 20)
+        for reading, unit in [("nan", "W"), ("-inf", "W"), ("250", "kWh")]:
+            self.hass.states.async_set(POWER, reading, {"unit_of_measurement": unit})
+            self.assertIsNone(coordinator.get_current_power())
+        for reading, unit in [("nan", "°C"), ("-inf", "°C"), ("250", "W")]:
+            self.hass.states.async_set(TEMPERATURE, reading, {"unit_of_measurement": unit})
+            await coordinator.async_refresh()
+            self.assertIsNone(coordinator.data["rooms"]["office"]["current_temp"])
 
 
 if __name__ == "__main__":
