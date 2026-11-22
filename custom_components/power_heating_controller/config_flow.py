@@ -74,11 +74,8 @@ from .const import (
 from .helpers import make_room_id
 from .radiator import collect_radiators
 
-ACTION_GLOBAL = "__global__"
-ACTION_ADD = "__add__"
 DELETE_ROOM = "delete_room"
 ADD_ANOTHER = "add_another"
-ACTION_RADIATORS = "__radiators__"
 DELETE_RADIATOR = "delete_radiator"
 
 NON_HEATING_MODES = {HVACMode.OFF, HVACMode.COOL, HVACMode.DRY, HVACMode.FAN_ONLY}
@@ -399,38 +396,49 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
                 dict(self.config_entry.options or self.config_entry.data)
             )
 
-        if user_input is not None:
-            action = user_input["action"]
-            if action == ACTION_GLOBAL:
-                return await self.async_step_global()
-            if action == ACTION_ADD:
-                return await self.async_step_room_heater_type()
-            if action == ACTION_RADIATORS:
-                return await self.async_step_radiators()
-            self._selected_room_id = action
-            return await self.async_step_edit_room()
-
-        actions = [{"value": ACTION_GLOBAL, "label": "Power limit, sensor and tolerances"}]
-        actions.extend(
-            {"value": r[CONF_ROOM_ID], "label": r[CONF_ROOM_NAME]} for r in self._rooms()
-        )
-        actions.append({"value": ACTION_ADD, "label": "Add room"})
+        choices = ["global", "room_heater_type"]
         if self._rooms():
-            actions.append({"value": ACTION_RADIATORS, "label": "Support and shared radiators"})
+            choices.extend(("select_room", "radiators"))
+        return self.async_show_menu(step_id="init", menu_options=choices)
+
+    async def async_step_select_room(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            self._selected_room_id = user_input[CONF_ROOM_ID]
+            return await self.async_step_room_menu()
 
         return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required("action"): SelectSelector(
-                        SelectSelectorConfig(
-                            options=actions,
-                            mode=SelectSelectorMode.LIST,
-                            translation_key="room_action",
-                        )
-                    )
-                }
-            ),
+            step_id="select_room",
+            data_schema=vol.Schema({vol.Required(CONF_ROOM_ID): self._room_selector()}),
+        )
+
+    def _room_selector(self, *, multiple: bool = False) -> SelectSelector:
+        return SelectSelector(SelectSelectorConfig(
+            options=[
+                {"value": room[CONF_ROOM_ID], "label": room[CONF_ROOM_NAME]}
+                for room in self._rooms()
+            ],
+            multiple=multiple,
+            mode=SelectSelectorMode.DROPDOWN,
+        ))
+
+    async def async_step_room_menu(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        room = self._selected_room()
+        if room is None:
+            return self.async_abort(reason="room_not_found")
+        radiators = self._visible_radiators()
+        choices = ["edit_room", "add_radiator"]
+        if radiators:
+            choices.append("select_radiator")
+        return self.async_show_menu(
+            step_id="room_menu",
+            menu_options=choices,
+            description_placeholders={
+                "room": room[CONF_ROOM_NAME],
+                "radiator_count": str(len(radiators)),
+                "radiator_names": ", ".join(
+                    self._radiator_name(item[CONF_HEATER_ENTITY]) for item in radiators
+                ),
+            },
         )
 
     async def async_step_global(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -623,25 +631,47 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
     ) -> ConfigFlowResult:
         if not self._rooms():
             return self.async_abort(reason="no_rooms")
-        if user_input is not None:
-            action = user_input["action"]
-            self._selected_radiator = None if action == ACTION_ADD else action
-            return await self.async_step_radiator()
+        choices = ["add_radiator"]
+        if self._visible_radiators():
+            choices.append("select_radiator")
+        return self.async_show_menu(step_id="radiators", menu_options=choices)
 
-        actions = [
-            {"value": item[CONF_HEATER_ENTITY], "label": self._radiator_name(item[CONF_HEATER_ENTITY])}
-            for item in self.config_entry.options.get(CONF_RADIATORS, [])
-        ]
-        actions.append({"value": ACTION_ADD, "label": "Add radiator"})
+    async def async_step_add_radiator(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        self._selected_radiator = None
+        return await self.async_step_radiator()
+
+    async def async_step_select_radiator(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            self._selected_radiator = user_input[CONF_HEATER_ENTITY]
+            if not any(
+                item[CONF_HEATER_ENTITY] == self._selected_radiator
+                for item in self._visible_radiators()
+            ):
+                return self.async_abort(reason="room_changed")
+            return await self.async_step_radiator()
         return self.async_show_form(
-            step_id="radiators",
+            step_id="select_radiator",
             data_schema=vol.Schema({
-                vol.Required("action"): SelectSelector(
-                    SelectSelectorConfig(options=actions, mode=SelectSelectorMode.LIST,
-                                         translation_key="radiator_action")
-                ),
+                vol.Required(CONF_HEATER_ENTITY): SelectSelector(SelectSelectorConfig(
+                    options=[
+                        {"value": item[CONF_HEATER_ENTITY],
+                         "label": self._radiator_name(item[CONF_HEATER_ENTITY])}
+                        for item in self._visible_radiators()
+                    ],
+                    mode=SelectSelectorMode.LIST,
+                )),
             }),
         )
+
+    def _visible_radiators(self) -> list[dict[str, Any]]:
+        return [
+            item for item in self.config_entry.options.get(CONF_RADIATORS, [])
+            if self._selected_room_id is None or self._selected_room_id in item[CONF_ROOM_IDS]
+        ]
 
     def _radiator_name(self, entity_id: str) -> str:
         state = self.hass.states.get(entity_id)
@@ -693,15 +723,12 @@ class PowerHeatingOptionsFlow(_AddRoomStepsMixin, OptionsFlow):
                 errors["base"] = error
 
         defaults = {**saved, **(user_input or {})}
-        rooms = [
-            {"value": room[CONF_ROOM_ID], "label": room[CONF_ROOM_NAME]} for room in self._rooms()
-        ]
+        linked_rooms = [self._selected_room_id] if self._selected_room_id is not None else []
         fields = {
             vol.Required(CONF_HEATER_ENTITY, default=defaults.get(CONF_HEATER_ENTITY, vol.UNDEFINED)):
                 EntitySelector(EntitySelectorConfig(domain=HEATER_TYPES)),
-            vol.Required(CONF_ROOM_IDS, default=defaults.get(CONF_ROOM_IDS, [])): SelectSelector(
-                SelectSelectorConfig(options=rooms, multiple=True, mode=SelectSelectorMode.DROPDOWN)
-            ),
+            vol.Required(CONF_ROOM_IDS, default=defaults.get(CONF_ROOM_IDS, linked_rooms)):
+                self._room_selector(multiple=True),
             vol.Required(CONF_POWER_W, default=defaults.get(CONF_POWER_W, DEFAULT_POWER_W)): NumberSelector(
                 NumberSelectorConfig(min=MIN_ROOM_POWER, max=MAX_ROOM_POWER, step=1,
                                      unit_of_measurement="W", mode=NumberSelectorMode.BOX)

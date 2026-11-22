@@ -72,8 +72,15 @@
     "step": {
       "radiators": {
         "title": "Support and shared radiators",
+        "menu_options": {
+          "add_radiator": "Add radiator",
+          "select_radiator": "View or edit radiators"
+        }
+      },
+      "select_radiator": {
+        "title": "Linked radiators",
         "data": {
-          "action": "Select an existing radiator or add one."
+          "heater_entity": "Radiator"
         }
       },
       "radiator": {
@@ -104,8 +111,26 @@
       },
       "init": {
         "title": "Power Heating Controller — Options",
+        "menu_options": {
+          "global": "Power limit, sensor and tolerances",
+          "room_heater_type": "Add room",
+          "select_room": "Configure a room",
+          "radiators": "Support and shared radiators"
+        }
+      },
+      "select_room": {
+        "title": "Configure room",
         "data": {
-          "action": "What would you like to configure?"
+          "room_id": "Room"
+        }
+      },
+      "room_menu": {
+        "title": "{room}",
+        "description": "Linked support radiators ({radiator_count})\n\n{radiator_names}",
+        "menu_options": {
+          "edit_room": "Edit room settings and primary radiator",
+          "add_radiator": "Add radiator",
+          "select_radiator": "View or edit radiators"
         }
       },
       "global": {
@@ -202,18 +227,6 @@
     }
   },
   "selector": {
-    "room_action": {
-      "options": {
-        "__global__": "Power limit, sensor and tolerances",
-        "__add__": "Add room",
-        "__radiators__": "Support and shared radiators"
-      }
-    },
-    "radiator_action": {
-      "options": {
-        "__add__": "Add radiator"
-      }
-    },
     "heating_mode": {
       "options": {
         "heat": "Heat",
@@ -239,6 +252,11 @@
       },
       "room_status": {
         "name": "Heating status",
+        "state_attributes": {
+          "radiators": {
+            "name": "Radiators and reported state"
+          }
+        },
         "state": {
           "heating": "Heating",
           "waiting": "Waiting for power",

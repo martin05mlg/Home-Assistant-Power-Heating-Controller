@@ -11,5 +11,5 @@
   "issue_tracker": "https://github.com/martin05mlg/Home-Assistant-Power-Heating-Controller/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "2.2.0"
+  "version": "2.2.1"
 }

@@ -16,6 +16,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry, entity_registry
+from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.entity import Entity
 
 DOMAIN = "power_heating_controller"
@@ -119,10 +120,21 @@ class TestPowerHeatingController(IsolatedAsyncioTestCase):
             if entity.unique_id.endswith(suffix)
         )
 
-    async def _edit_room(self, entry):
+    async def _open_room_menu(self, entry, room_id):
         options = self.hass.config_entries.options
         result = await options.async_init(entry.entry_id)
-        result = await options.async_configure(result["flow_id"], {"action": "office"})
+        flow_id = result["flow_id"]
+        result = await options.async_configure(flow_id, {"next_step_id": "select_room"})
+        self.assertEqual(result["step_id"], "select_room")
+        result = await options.async_configure(flow_id, {"room_id": room_id})
+        self.assertEqual(result["step_id"], "room_menu")
+        return result
+
+    async def _edit_room(self, entry):
+        result = await self._open_room_menu(entry, "office")
+        result = await self.hass.config_entries.options.async_configure(
+            result["flow_id"], {"next_step_id": "edit_room"}
+        )
         self.assertEqual(result["step_id"], "edit_room")
         return result["flow_id"]
 
@@ -135,13 +147,18 @@ class TestPowerHeatingController(IsolatedAsyncioTestCase):
         }, blocking=True)
         await self.hass.async_block_till_done()
 
-    async def _open_radiator_form(self, entry, selection="__add__"):
+    async def _open_radiator_form(self, entry, selection=None):
         options = self.hass.config_entries.options
         result = await options.async_init(entry.entry_id)
         flow_id = result["flow_id"]
-        result = await options.async_configure(flow_id, {"action": "__radiators__"})
+        result = await options.async_configure(flow_id, {"next_step_id": "radiators"})
         self.assertEqual(result["step_id"], "radiators")
-        result = await options.async_configure(flow_id, {"action": selection})
+        if selection is None:
+            result = await options.async_configure(flow_id, {"next_step_id": "add_radiator"})
+        else:
+            result = await options.async_configure(flow_id, {"next_step_id": "select_radiator"})
+            self.assertEqual(result["step_id"], "select_radiator")
+            result = await options.async_configure(flow_id, {"heater_entity": selection})
         self.assertEqual(result["step_id"], "radiator")
         return flow_id
 
@@ -399,6 +416,62 @@ class TestPowerHeatingController(IsolatedAsyncioTestCase):
         self.assertEqual(result["type"], "create_entry")
         self.assertEqual(self.hass.states.get(CLIMATE_HEATER).state, "off")
         self.assertEqual(entry.options["radiators"], [])
+
+    async def test_radiator_menus_use_spanish_translations_and_filter_by_room(self):
+        self._power(1500)
+        entry = await self._setup_room()
+        await self._add_bedroom()
+        await self._add_hall(entry, ["office", "bedroom"])
+        office_support = "switch.office_support"
+        self.hass.states.async_set(office_support, "off")
+        options = self.hass.config_entries.options
+
+        spanish = await async_get_translations(self.hass, "es", "options", {DOMAIN})
+        prefix = f"component.{DOMAIN}.options.step."
+        self.assertEqual(
+            spanish[prefix + "init.menu_options.radiators"], "Radiadores suplementarios y compartidos"
+        )
+        for menu in ("radiators", "room_menu"):
+            self.assertEqual(spanish[prefix + menu + ".menu_options.add_radiator"], "Añadir radiador")
+            self.assertEqual(
+                spanish[prefix + menu + ".menu_options.select_radiator"], "Ver o editar radiadores"
+            )
+
+        room_menu = await self._open_room_menu(entry, "office")
+        self.assertEqual(room_menu["description_placeholders"]["radiator_count"], "1")
+        flow_id = room_menu["flow_id"]
+        result = await options.async_configure(flow_id, {"next_step_id": "add_radiator"})
+        room_field = next(key for key in result["data_schema"].schema if key.schema == "room_ids")
+        self.assertEqual(room_field.default(), ["office"])
+        result = await options.async_configure(flow_id, {
+            "heater_entity": office_support, "power_w": 300, "radiator_order": 5,
+        })
+        self.assertEqual(result["type"], "create_entry", result)
+        await self.hass.async_block_till_done()
+
+        for room_id, expected in (("bedroom", [HALL]), ("office", [HALL, office_support])):
+            room_menu = await self._open_room_menu(entry, room_id)
+            self.assertEqual(room_menu["description_placeholders"]["radiator_count"], str(len(expected)))
+            flow_id = room_menu["flow_id"]
+            result = await options.async_configure(flow_id, {"next_step_id": "select_radiator"})
+            selector, = result["data_schema"].schema.values()
+            self.assertEqual([option["value"] for option in selector.config["options"]], expected)
+            options.async_abort(flow_id)
+
+        room_menu = await self._open_room_menu(entry, "bedroom")
+        flow_id = room_menu["flow_id"]
+        await options.async_configure(flow_id, {"next_step_id": "select_radiator"})
+        result = await options.async_configure(flow_id, {"heater_entity": HALL})
+        room_field = next(key for key in result["data_schema"].schema if key.schema == "room_ids")
+        self.assertEqual(room_field.default(), ["office", "bedroom"])
+        result = await options.async_configure(flow_id, {"power_w": 650})
+        self.assertEqual(result["type"], "create_entry", result)
+        await self.hass.async_block_till_done()
+
+        flow_id = await self._open_radiator_form(entry, HALL)
+        self.assertEqual(entry.options["radiators"][0]["power_w"], 650)
+        self.assertEqual(entry.options["radiators"][0]["room_ids"], ["office", "bedroom"])
+        options.async_abort(flow_id)
 
     async def test_primary_preemption_also_waits_for_confirmed_shutdown(self):
         entry = await self._setup_room()

@@ -75,13 +75,15 @@ For a `climate` heater, pick a heating mode from the dropdown. It lists the mode
 
 The optional maximum-temperature setting is enabled by default. When a room gets permission, the controller selects the heating mode and then asks the heater to use its own maximum setpoint. The virtual thermostat determines when to stop heating the room.
 
-Open **Settings → Devices & services → Power Heating Controller → Configure** to change the power limit, add a room or edit an existing room. If you replace a `climate` heater, choose a mode for the new device in the next step. For either heater type, Home Assistant must confirm that the previous heater reports `off` before the controller saves the replacement. If shutdown fails, the original heater stays assigned to the room.
+Open **Settings → Devices & services → Power Heating Controller → Configure** to change the power limit or add a room. To edit a room, choose **Configure a room**, select it, and open **Edit room settings and primary radiator**. If you replace a `climate` heater, choose a mode for the new device in the next step. For either heater type, Home Assistant must confirm that the previous heater reports `off` before the controller saves the replacement. If shutdown fails, the original heater stays assigned to the room.
 
-To remove a room, open it under **Configure**, select **Delete this room**, and confirm with **Remove room** on the next screen. Home Assistant must confirm that the heater reports `off` before removing the room. If it cannot confirm the shutdown within five seconds, the room stays configured and an error is shown.
+To remove a room, open its settings, select **Delete this room**, and confirm with **Remove room** on the next screen. Home Assistant must confirm heater shutdown before removing the room. If it cannot confirm that a heater is off within five seconds, the room stays configured and an error is shown.
 
 ### Support and shared radiators
 
 Open **Configure → Support and shared radiators → Add radiator**. Choose the radiator entity, its rated wattage and the rooms it serves. Link one room for an additional radiator in that room, or link several for a shared radiator, such as an open hallway between two rooms. Set **Start order** to choose which support starts first when their room priority and temperature deficit are equal. Lower numbers start first.
+
+You can also manage radiators from **Configure → Configure a room**. Each room shows its linked support and shared radiators. Select **View or edit radiators** to edit one, or **Add radiator** to start with that room already selected. A shared radiator opens the same settings from any linked room or from the general radiator menu.
 
 A shared radiator can start when any linked, enabled room with a valid temperature reading requests heat. It uses the most urgent linked room's priority and counts its wattage once, even when several rooms request it. Radiators need independently controllable entities for individual switching. Existing room heaters continue as their room's primary, with the same thermostat entity IDs.
 
@@ -166,6 +168,11 @@ docker run --rm --network none \
 The power-burst test sends 120 readings to a controller with four idle rooms and 15 entities. It measured **1,800 → 240 calls to write entity state** on Home Assistant 2026.11.2, a reduction of 87% in this scenario. Both power sensors still publish every reading in the test.
 
 ## Changelog
+
+### 2.2.1
+
+- Translate the room and radiator menus through Home Assistant and show the radiator details label in the selected language.
+- View, edit or add support and shared radiators from each linked room as well as from the general radiator menu.
 
 ### 2.2.0
 

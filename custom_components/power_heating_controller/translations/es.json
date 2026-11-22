@@ -71,9 +71,16 @@
   "options": {
     "step": {
       "radiators": {
-        "title": "Radiadores de apoyo y compartidos",
+        "title": "Radiadores suplementarios y compartidos",
+        "menu_options": {
+          "add_radiator": "Añadir radiador",
+          "select_radiator": "Ver o editar radiadores"
+        }
+      },
+      "select_radiator": {
+        "title": "Radiadores vinculados",
         "data": {
-          "action": "Selecciona un radiador para editarlo o añade uno."
+          "heater_entity": "Radiador"
         }
       },
       "radiator": {
@@ -104,8 +111,26 @@
       },
       "init": {
         "title": "Power Heating Controller — Opciones",
+        "menu_options": {
+          "global": "Límite de potencia, sensor y tolerancias",
+          "room_heater_type": "Añadir estancia",
+          "select_room": "Configurar una estancia",
+          "radiators": "Radiadores suplementarios y compartidos"
+        }
+      },
+      "select_room": {
+        "title": "Configurar estancia",
         "data": {
-          "action": "¿Qué quieres configurar?"
+          "room_id": "Estancia"
+        }
+      },
+      "room_menu": {
+        "title": "{room}",
+        "description": "Radiadores suplementarios vinculados ({radiator_count})\n\n{radiator_names}",
+        "menu_options": {
+          "edit_room": "Editar ajustes y radiador principal",
+          "add_radiator": "Añadir radiador",
+          "select_radiator": "Ver o editar radiadores"
         }
       },
       "global": {
@@ -202,18 +227,6 @@
     }
   },
   "selector": {
-    "room_action": {
-      "options": {
-        "__global__": "Límite de potencia, sensor y tolerancias",
-        "__add__": "Añadir habitación",
-        "__radiators__": "Radiadores de apoyo y compartidos"
-      }
-    },
-    "radiator_action": {
-      "options": {
-        "__add__": "Añadir radiador"
-      }
-    },
     "heating_mode": {
       "options": {
         "heat": "Calor",
@@ -239,6 +252,11 @@
       },
       "room_status": {
         "name": "Estado de calefacción",
+        "state_attributes": {
+          "radiators": {
+            "name": "Radiadores y estado del equipo"
+          }
+        },
         "state": {
           "heating": "Calentando",
           "waiting": "Esperando potencia",
