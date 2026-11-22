@@ -106,7 +106,15 @@ Find the `room_id` in the virtual thermostat's state attributes.
 
 ## Changelog
 
-- **Unreleased** adds a heating-mode dropdown based on the selected device, translates the options menu, and asks for confirmation before removing a room.
+### 2.1.0
+
+- Choose a heating mode from the modes reported by the selected heater. When replacing a heater, the wizard shows the new device's modes before saving.
+- The options menu is available in English and Spanish.
+- Each room has a **Waiting reason** sensor that explains why heating is paused.
+- Removing a room from **Configure** requires confirmation. Both **Configure** and the `remove_room` action keep the room if Home Assistant cannot confirm that the heater is off.
+
+### Earlier versions
+
 - **2.0.1** updates the climate and device registry APIs, fixes loading on Home Assistant 2025.2, and adds local branding for Home Assistant 2026.3 and newer.
 - **2.0.0** added power reservations, load shedding and heater reconciliation, and improved room priorities, sensor outage handling and settings persistence. [Changes in 2.0.0](https://github.com/martin05mlg/Home-Assistant-Power-Heating-Controller/commit/663d643)
 - **1.1.0** fixed options editing, service registration and entity registry cleanup.
